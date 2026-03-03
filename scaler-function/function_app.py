@@ -212,6 +212,8 @@ def _has_runner_for_workflow_job(runners: list[dict[str, Any]], workflow_job_id:
     if not workflow_job_id:
         return False
     for runner in runners:
+        if _runner_state(runner) in TERMINAL_RUNNER_STATES:
+            continue
         if _runner_workflow_job_id(runner) == workflow_job_id:
             return True
     return False
@@ -320,6 +322,62 @@ def _github_runner_registration_token() -> str:
     return token
 
 
+def _github_self_hosted_runners() -> list[dict[str, Any]]:
+    repo = _env("GITHUB_REPO", required=True)
+    token = _github_installation_access_token()
+
+    url = f"{GITHUB_API_BASE}/repos/{repo}/actions/runners"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+
+    all_runners: list[dict[str, Any]] = []
+    page = 1
+    per_page = 100
+
+    while True:
+        response = requests.get(
+            url,
+            headers=headers,
+            params={"per_page": per_page, "page": page},
+            timeout=30,
+        )
+        if response.status_code >= 400:
+            logging.error("GitHub runners listing failed: %s", response.text)
+            response.raise_for_status()
+
+        payload = response.json()
+        runners = payload.get("runners", [])
+        if not isinstance(runners, list) or len(runners) == 0:
+            break
+
+        all_runners.extend(runners)
+        if len(runners) < per_page:
+            break
+        page += 1
+
+    return all_runners
+
+
+def _github_delete_runner(runner_id: int) -> None:
+    repo = _env("GITHUB_REPO", required=True)
+    token = _github_installation_access_token()
+
+    url = f"{GITHUB_API_BASE}/repos/{repo}/actions/runners/{runner_id}"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+
+    response = requests.delete(url, headers=headers, timeout=30)
+    if response.status_code >= 400:
+        logging.error("GitHub runner delete failed (id=%s): %s", runner_id, response.text)
+        response.raise_for_status()
+
+
 def _runner_secure_env() -> dict[str, str]:
     refreshed = _github_runner_registration_token()
     return {"RUNNER_TOKEN": refreshed}
@@ -401,6 +459,60 @@ def _delete_runner(name: str) -> None:
     logging.info("Deleted runner %s", name)
 
 
+def _cleanup_orphaned_github_runners(active_runners: list[dict[str, Any]]) -> int:
+    prefix = _env("RUNNER_NAME_PREFIX", required=True)
+    grace_minutes = _int_env("RUNNER_GITHUB_ORPHAN_GRACE_MINUTES", 5)
+    now = _utcnow()
+
+    active_names = {
+        str(item.get("name", "")).strip()
+        for item in active_runners
+        if str(item.get("name", "")).strip()
+    }
+
+    deleted = 0
+    try:
+        github_runners = _github_self_hosted_runners()
+    except Exception as exc:
+        logging.warning("Skipping orphaned GitHub runner cleanup due to list error: %s", exc)
+        return 0
+
+    for gh_runner in github_runners:
+        name = str(gh_runner.get("name", "")).strip()
+        if not name.startswith(f"{prefix}-"):
+            continue
+
+        status = str(gh_runner.get("status", "")).strip().lower()
+        busy = bool(gh_runner.get("busy", False))
+        if status != "offline" or busy:
+            continue
+
+        if name in active_names:
+            continue
+
+        runner_id_raw = gh_runner.get("id")
+        try:
+            runner_id = int(runner_id_raw)
+        except Exception:
+            logging.warning("Skipping GitHub runner with invalid id: %s (%s)", name, runner_id_raw)
+            continue
+
+        updated_at = _parse_any_timestamp(gh_runner.get("updated_at"))
+        if updated_at is not None:
+            age_minutes = (now - updated_at).total_seconds() / 60
+            if age_minutes < grace_minutes:
+                continue
+
+        logging.info("Deleting orphaned GitHub runner registration: %s (id=%s)", name, runner_id)
+        try:
+            _github_delete_runner(runner_id)
+            deleted += 1
+        except Exception as exc:
+            logging.warning("Failed deleting orphaned GitHub runner %s (id=%s): %s", name, runner_id, exc)
+
+    return deleted
+
+
 def _scale_once(scale_hint: int = 0, workflow_job_id: str = "") -> dict[str, Any]:
     min_instances = _int_env("RUNNER_MIN_INSTANCES", 0)
     max_instances = _int_env("RUNNER_MAX_INSTANCES", 10)
@@ -414,7 +526,9 @@ def _scale_once(scale_hint: int = 0, workflow_job_id: str = "") -> dict[str, Any
         logging.info("Duplicate workflow_job event detected (id=%s); suppressing extra scale-up", workflow_job_id)
         scale_hint = 0
 
-    current = len(runners)
+    active_runners = [runner for runner in runners if _runner_state(runner) not in TERMINAL_RUNNER_STATES]
+    current = len(active_runners)
+    orphaned_github_deleted = _cleanup_orphaned_github_runners(active_runners)
 
     desired = max(min_instances, min(max_instances, min_instances + max(0, scale_hint)))
 
@@ -427,7 +541,7 @@ def _scale_once(scale_hint: int = 0, workflow_job_id: str = "") -> dict[str, Any
         created += 1
 
     if current > max_instances:
-        for runner in sorted(runners, key=lambda item: item.get("name", "")):
+        for runner in sorted(active_runners, key=lambda item: item.get("name", "")):
             if current <= max_instances:
                 break
             _delete_runner(runner["name"])
@@ -440,6 +554,7 @@ def _scale_once(scale_hint: int = 0, workflow_job_id: str = "") -> dict[str, Any
         "created": created,
         "deleted": deleted,
         "pruned": pruned,
+        "orphaned_github_deleted": orphaned_github_deleted,
         "workflow_job_id": workflow_job_id,
     }
 

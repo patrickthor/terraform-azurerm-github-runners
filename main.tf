@@ -26,6 +26,7 @@ locals {
     SCM_DO_BUILD_DURING_DEPLOYMENT = "true"
     ENABLE_ORYX_BUILD              = "true"
     FUNCTIONS_WORKER_RUNTIME       = "python"
+    SCALER_PACKAGE_SHA             = data.archive_file.scaler_package.output_sha
 
     SERVICEBUS_QUEUE_NAME        = var.servicebus_queue_name
     SERVICEBUS_NAMESPACE_FQDN    = "${azurerm_servicebus_namespace.scaler.name}.servicebus.windows.net"

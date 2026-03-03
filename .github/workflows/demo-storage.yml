@@ -1,0 +1,68 @@
+name: Demo Storage Terraform
+
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "Run terraform apply"
+        required: false
+        default: false
+        type: boolean
+  push:
+    branches:
+      - main
+    paths:
+      - "demo/**"
+      - ".github/workflows/demo-storage.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  terraform:
+    name: Terraform Demo
+    environment: production
+    runs-on:
+      - self-hosted
+      - azure
+      - container-instance
+
+    defaults:
+      run:
+        working-directory: demo
+
+    env:
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID || vars.AZURE_CLIENT_ID || secrets.ARM_CLIENT_ID || vars.ARM_CLIENT_ID }}
+      ARM_SUBSCRIPTION_ID: 61a5c972-6381-4d85-b1e0-032d5b3246b3
+      ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID || vars.AZURE_CLIENT_ID || secrets.ARM_CLIENT_ID || vars.ARM_CLIENT_ID }}
+      ARM_USE_MSI: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate Managed Identity inputs
+        run: |
+          if [ -z "${AZURE_CLIENT_ID}" ]; then
+            echo "Missing user-assigned managed identity client id. Set AZURE_CLIENT_ID (or ARM_CLIENT_ID) as a secret or variable."
+            exit 1
+          fi
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.8.5
+          terraform_wrapper: false
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Terraform Validate
+        run: terraform validate
+
+      - name: Terraform Plan
+        run: terraform plan -out=tfplan
+
+      - name: Terraform Apply
+        if: github.event_name == 'workflow_dispatch' && inputs.apply == true
+        run: terraform apply -auto-approve tfplan
