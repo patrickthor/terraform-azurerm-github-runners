@@ -240,7 +240,6 @@ resource "azurerm_linux_function_app" "scaler" {
   service_plan_id            = azurerm_service_plan.functions.id
   storage_account_name       = azurerm_storage_account.functions.name
   storage_account_access_key = azurerm_storage_account.functions.primary_access_key
-  zip_deploy_file            = data.archive_file.scaler_package.output_path
 
   identity {
     type = "SystemAssigned"
@@ -287,6 +286,27 @@ resource "azurerm_linux_function_app" "scaler" {
   }
 
   tags = var.tags
+}
+
+# Deploy the function package only after the app and all its settings are fully
+# applied. Using az functionapp deployment source config-zip avoids the race
+# condition that exists when Terraform's built-in zip_deploy_file attribute
+# uploads the zip while a concurrent app-settings change is still restarting
+# the host, which prevents the Oryx build from running and leaves the runtime
+# unable to discover the functions.
+resource "null_resource" "scaler_zip_deploy" {
+  triggers = {
+    package_sha = data.archive_file.scaler_package.output_sha
+  }
+
+  depends_on = [
+    azurerm_linux_function_app.scaler,
+    azurerm_role_assignment.scaler_keyvault_secrets_user,
+  ]
+
+  provisioner "local-exec" {
+    command = "az functionapp deployment source config-zip --resource-group '${var.resource_group_name}' --name '${var.function_app_name}' --src '${data.archive_file.scaler_package.output_path}' --build-remote true --timeout 300"
+  }
 }
 
 resource "azurerm_role_assignment" "scaler_contributor" {

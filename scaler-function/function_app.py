@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import datetime as dt
 import base64
 import hashlib
@@ -12,7 +14,6 @@ import azure.functions as func
 import jwt
 import requests
 from azure.identity import DefaultAzureCredential
-from azure.servicebus import ServiceBusClient, ServiceBusMessage
 
 app = func.FunctionApp(http_auth_level=func.AuthLevel.FUNCTION)
 
@@ -61,6 +62,8 @@ def _verify_github_signature(raw: bytes, secret: str, signature_header: str | No
 
 
 def _servicebus_send(payload: dict[str, Any]) -> None:
+    from azure.servicebus import ServiceBusClient, ServiceBusMessage
+
     conn = _env("SERVICEBUS_CONNECTION_STRING", required=True)
     queue_name = _env("SERVICEBUS_QUEUE_NAME", required=True)
 
@@ -68,6 +71,28 @@ def _servicebus_send(payload: dict[str, Any]) -> None:
         sender = client.get_queue_sender(queue_name=queue_name)
         with sender:
             sender.send_messages(ServiceBusMessage(json.dumps(payload)))
+
+
+def _servicebus_active_message_count() -> int:
+    rg = _env("RUNNER_RESOURCE_GROUP", required=True)
+    queue_name = _env("SERVICEBUS_QUEUE_NAME", required=True)
+    namespace_fqdn = _env("SERVICEBUS_NAMESPACE_FQDN", required=True)
+    namespace_name = namespace_fqdn.split(".", 1)[0].strip()
+    if not namespace_name:
+        return 0
+
+    path = (
+        f"/resourceGroups/{rg}/providers/Microsoft.ServiceBus/namespaces/{namespace_name}"
+        f"/queues/{queue_name}?api-version=2024-01-01"
+    )
+    try:
+        response = _arm_request("GET", path)
+        data = response.json()
+        details = (data.get("properties") or {}).get("countDetails") or {}
+        return int(details.get("activeMessageCount", 0) or 0)
+    except Exception as exc:
+        logging.warning("Unable to read Service Bus queue depth: %s", exc)
+        return 0
 
 
 def _arm_token() -> str:
@@ -212,8 +237,6 @@ def _has_runner_for_workflow_job(runners: list[dict[str, Any]], workflow_job_id:
     if not workflow_job_id:
         return False
     for runner in runners:
-        if _runner_state(runner) in TERMINAL_RUNNER_STATES:
-            continue
         if _runner_workflow_job_id(runner) == workflow_job_id:
             return True
     return False
@@ -322,62 +345,6 @@ def _github_runner_registration_token() -> str:
     return token
 
 
-def _github_self_hosted_runners() -> list[dict[str, Any]]:
-    repo = _env("GITHUB_REPO", required=True)
-    token = _github_installation_access_token()
-
-    url = f"{GITHUB_API_BASE}/repos/{repo}/actions/runners"
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Accept": "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-    }
-
-    all_runners: list[dict[str, Any]] = []
-    page = 1
-    per_page = 100
-
-    while True:
-        response = requests.get(
-            url,
-            headers=headers,
-            params={"per_page": per_page, "page": page},
-            timeout=30,
-        )
-        if response.status_code >= 400:
-            logging.error("GitHub runners listing failed: %s", response.text)
-            response.raise_for_status()
-
-        payload = response.json()
-        runners = payload.get("runners", [])
-        if not isinstance(runners, list) or len(runners) == 0:
-            break
-
-        all_runners.extend(runners)
-        if len(runners) < per_page:
-            break
-        page += 1
-
-    return all_runners
-
-
-def _github_delete_runner(runner_id: int) -> None:
-    repo = _env("GITHUB_REPO", required=True)
-    token = _github_installation_access_token()
-
-    url = f"{GITHUB_API_BASE}/repos/{repo}/actions/runners/{runner_id}"
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Accept": "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-    }
-
-    response = requests.delete(url, headers=headers, timeout=30)
-    if response.status_code >= 400:
-        logging.error("GitHub runner delete failed (id=%s): %s", runner_id, response.text)
-        response.raise_for_status()
-
-
 def _runner_secure_env() -> dict[str, str]:
     refreshed = _github_runner_registration_token()
     return {"RUNNER_TOKEN": refreshed}
@@ -459,60 +426,6 @@ def _delete_runner(name: str) -> None:
     logging.info("Deleted runner %s", name)
 
 
-def _cleanup_orphaned_github_runners(active_runners: list[dict[str, Any]]) -> int:
-    prefix = _env("RUNNER_NAME_PREFIX", required=True)
-    grace_minutes = _int_env("RUNNER_GITHUB_ORPHAN_GRACE_MINUTES", 5)
-    now = _utcnow()
-
-    active_names = {
-        str(item.get("name", "")).strip()
-        for item in active_runners
-        if str(item.get("name", "")).strip()
-    }
-
-    deleted = 0
-    try:
-        github_runners = _github_self_hosted_runners()
-    except Exception as exc:
-        logging.warning("Skipping orphaned GitHub runner cleanup due to list error: %s", exc)
-        return 0
-
-    for gh_runner in github_runners:
-        name = str(gh_runner.get("name", "")).strip()
-        if not name.startswith(f"{prefix}-"):
-            continue
-
-        status = str(gh_runner.get("status", "")).strip().lower()
-        busy = bool(gh_runner.get("busy", False))
-        if status != "offline" or busy:
-            continue
-
-        if name in active_names:
-            continue
-
-        runner_id_raw = gh_runner.get("id")
-        try:
-            runner_id = int(runner_id_raw)
-        except Exception:
-            logging.warning("Skipping GitHub runner with invalid id: %s (%s)", name, runner_id_raw)
-            continue
-
-        updated_at = _parse_any_timestamp(gh_runner.get("updated_at"))
-        if updated_at is not None:
-            age_minutes = (now - updated_at).total_seconds() / 60
-            if age_minutes < grace_minutes:
-                continue
-
-        logging.info("Deleting orphaned GitHub runner registration: %s (id=%s)", name, runner_id)
-        try:
-            _github_delete_runner(runner_id)
-            deleted += 1
-        except Exception as exc:
-            logging.warning("Failed deleting orphaned GitHub runner %s (id=%s): %s", name, runner_id, exc)
-
-    return deleted
-
-
 def _scale_once(scale_hint: int = 0, workflow_job_id: str = "") -> dict[str, Any]:
     min_instances = _int_env("RUNNER_MIN_INSTANCES", 0)
     max_instances = _int_env("RUNNER_MAX_INSTANCES", 10)
@@ -528,9 +441,10 @@ def _scale_once(scale_hint: int = 0, workflow_job_id: str = "") -> dict[str, Any
 
     active_runners = [runner for runner in runners if _runner_state(runner) not in TERMINAL_RUNNER_STATES]
     current = len(active_runners)
-    orphaned_github_deleted = _cleanup_orphaned_github_runners(active_runners)
 
-    desired = max(min_instances, min(max_instances, min_instances + max(0, scale_hint)))
+    queue_backlog = _servicebus_active_message_count()
+    requested_parallel = max(0, scale_hint) + max(0, queue_backlog)
+    desired = max(min_instances, min(max_instances, requested_parallel))
 
     created = 0
     deleted = 0
@@ -554,7 +468,7 @@ def _scale_once(scale_hint: int = 0, workflow_job_id: str = "") -> dict[str, Any
         "created": created,
         "deleted": deleted,
         "pruned": pruned,
-        "orphaned_github_deleted": orphaned_github_deleted,
+        "queue_backlog": queue_backlog,
         "workflow_job_id": workflow_job_id,
     }
 
@@ -611,3 +525,23 @@ def scale_worker(message: func.ServiceBusMessage) -> None:
     except Exception:
         logging.exception("Scale worker failed")
         raise
+
+
+@app.timer_trigger(
+    arg_name="timer",
+    schedule="0 */2 * * * *",
+    run_on_startup=False,
+    use_monitor=True,
+)
+def cleanup_timer(timer: func.TimerRequest) -> None:
+    if timer.past_due:
+        logging.warning("Cleanup timer is running late")
+
+    result = _scale_once(scale_hint=0)
+    logging.info(
+        "Timer cleanup result: pruned=%s desired=%s current=%s queue_backlog=%s",
+        result.get("pruned"),
+        result.get("desired"),
+        result.get("current"),
+        result.get("queue_backlog"),
+    )
