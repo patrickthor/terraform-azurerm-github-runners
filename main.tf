@@ -5,11 +5,11 @@
 data "azurerm_client_config" "current" {}
 
 locals {
-  has_github_app_id     = var.github_app_id_secret_name != null && trimspace(var.github_app_id_secret_name) != ""
-  has_github_app_inst   = var.github_app_installation_id_secret_name != null && trimspace(var.github_app_installation_id_secret_name) != ""
-  has_github_app_key    = var.github_app_private_key_secret_name != null && trimspace(var.github_app_private_key_secret_name) != ""
+  has_github_app_id     = try(trimspace(var.github_app_id_secret_name), "") != ""
+  has_github_app_inst   = try(trimspace(var.github_app_installation_id_secret_name), "") != ""
+  has_github_app_key    = try(trimspace(var.github_app_private_key_secret_name), "") != ""
   has_complete_app_auth = local.has_github_app_id && local.has_github_app_inst && local.has_github_app_key
-  has_webhook_secret    = var.webhook_secret_secret_name != null && trimspace(var.webhook_secret_secret_name) != ""
+  has_webhook_secret    = try(trimspace(var.webhook_secret_secret_name), "") != ""
 
   github_app_id_secret_uri              = "${azurerm_key_vault.kv.vault_uri}secrets/${var.github_app_id_secret_name}"
   github_app_installation_id_secret_uri = "${azurerm_key_vault.kv.vault_uri}secrets/${var.github_app_installation_id_secret_name}"
