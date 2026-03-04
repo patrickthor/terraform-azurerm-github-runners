@@ -8,12 +8,6 @@ on:
         required: false
         default: false
         type: boolean
-  push:
-    branches:
-      - main
-    paths:
-      - "demo/**"
-      - ".github/workflows/demo-storage.yml"
 
 permissions:
   contents: read
