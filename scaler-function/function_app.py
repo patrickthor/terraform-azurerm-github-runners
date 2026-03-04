@@ -223,8 +223,8 @@ def _runner_name_for_workflow_job(workflow_job_id: str) -> str:
 
 
 def _prune_stale_runners(runners: list[dict[str, Any]]) -> int:
-    max_runtime_hours = _int_env("MAX_RUNNER_RUNTIME_HOURS", 8)
-    terminal_ttl_minutes = _int_env("RUNNER_COMPLETED_TTL_MINUTES", 15)
+    max_runtime_hours = _int_env("MAX_RUNNER_RUNTIME_HOURS", 2)
+    terminal_ttl_minutes = _int_env("RUNNER_COMPLETED_TTL_MINUTES", 5)
     now = _utcnow()
 
     deleted = 0
@@ -581,7 +581,7 @@ def scale_worker(message: func.ServiceBusMessage) -> None:
 
 @app.timer_trigger(
     arg_name="timer",
-    schedule="0 */2 * * * *",
+    schedule="0 */5 * * * *",
     run_on_startup=False,
     use_monitor=True,
 )

@@ -220,9 +220,19 @@ variable "event_poll_interval_seconds" {
 variable "max_runner_runtime_hours" {
   description = "Maximum hours a dynamically spawned runner can run before scaler marks it stale"
   type        = number
-  default     = 8
+  default     = 2
   validation {
     condition     = var.max_runner_runtime_hours >= 1 && var.max_runner_runtime_hours <= 24
     error_message = "Max runtime must be between 1 and 24 hours."
+  }
+}
+
+variable "runner_completed_ttl_minutes" {
+  description = "Minutes to keep a terminated/succeeded runner container before deleting it"
+  type        = number
+  default     = 5
+  validation {
+    condition     = var.runner_completed_ttl_minutes >= 1 && var.runner_completed_ttl_minutes <= 60
+    error_message = "Completed TTL must be between 1 and 60 minutes."
   }
 }
