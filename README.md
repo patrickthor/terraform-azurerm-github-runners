@@ -73,7 +73,63 @@ Install the app on the target repository. After creation collect:
 
 ---
 
-### 2. Bootstrap — provision remote state storage
+### 2. Provision Azure identity and permissions
+
+This is a **one-time** setup that creates the service principal used by GitHub Actions, assigns it the roles Terraform needs, and establishes the OIDC trust with your repository.
+
+```bash
+# Edit these four values
+RG=rg-runner-poc-bvt
+LOCATION=westeurope
+APP_NAME=sp-runner-poc-bvt
+GITHUB_ORG=your-org
+GITHUB_REPO=your-repo   # just the repo name, not org/repo
+
+SUBSCRIPTION_ID=$(az account show --query id -o tsv)
+
+# 1. Create the resource group (also done idempotently by the Bootstrap workflow)
+az group create --name $RG --location $LOCATION
+
+# 2. Create the App Registration and its service principal
+CLIENT_ID=$(az ad app create --display-name $APP_NAME --query appId -o tsv)
+az ad sp create --id $CLIENT_ID
+
+# 3. Add OIDC federated credential so GitHub Actions can authenticate without secrets
+az ad app federated-credential create --id $CLIENT_ID --parameters "{
+  \"name\": \"github-actions-main\",
+  \"issuer\": \"https://token.actions.githubusercontent.com\",
+  \"subject\": \"repo:$GITHUB_ORG/$GITHUB_REPO:ref:refs/heads/main\",
+  \"audiences\": [\"api://AzureADTokenExchange\"]
+}"
+
+# 4. Assign roles on the resource group
+PRINCIPAL_ID=$(az ad sp show --id $CLIENT_ID --query id -o tsv)
+SCOPE=/subscriptions/$SUBSCRIPTION_ID/resourceGroups/$RG
+
+# Contributor — creates/modifies all module resources
+az role assignment create \
+  --assignee-object-id $PRINCIPAL_ID --assignee-principal-type ServicePrincipal \
+  --role Contributor --scope $SCOPE
+
+# User Access Administrator — required to create the role assignments inside the module
+# (AcrPull, Contributor on RG, Managed Identity Operator, Key Vault Secrets User)
+az role assignment create \
+  --assignee-object-id $PRINCIPAL_ID --assignee-principal-type ServicePrincipal \
+  --role "User Access Administrator" --scope $SCOPE
+
+# 5. Print values to paste into GitHub secrets
+echo ""
+echo "--- GitHub Secrets ---"
+echo "AZURE_CLIENT_ID:       $CLIENT_ID"
+echo "AZURE_TENANT_ID:       $(az account show --query tenantId -o tsv)"
+echo "AZURE_SUBSCRIPTION_ID: $SUBSCRIPTION_ID"
+```
+
+> `Storage Blob Data Contributor` on the state storage account is granted automatically by the Bootstrap workflow after it creates the storage account.
+
+---
+
+### 3. Bootstrap — provision remote state storage
 
 The bootstrap module creates the Storage Account and blob container that holds Terraform remote state. It runs with **local state** by design and only needs to run once per environment.
 
@@ -90,7 +146,7 @@ The bootstrap workflow will print a backend config snippet at the end — you ca
 
 ---
 
-### 3. Configure GitHub Actions variables and secrets
+### 4. Configure GitHub Actions variables and secrets
 
 In your repository go to **Settings → Secrets and variables → Actions**.
 
@@ -119,11 +175,11 @@ In your repository go to **Settings → Secrets and variables → Actions**.
 | `GITHUB_ORG` | `your-org` |
 | `GITHUB_REPO` | `your-org/your-repo` |
 
-> **OIDC setup**: The `AZURE_CLIENT_ID` must belong to an App Registration with a federated credential configured for this repository. In Azure Portal: App Registration → Certificates & secrets → Federated credentials → Add credential → GitHub Actions.
+> Paste the values printed at the end of step 2 as the three secrets.
 
 ---
 
-### 4. Deploy infrastructure + code (push to `main`)
+### 5. Deploy infrastructure + code (push to `main`)
 
 Push any commit to `main` — the **Deploy** workflow runs automatically:
 
@@ -132,7 +188,7 @@ Push any commit to `main` — the **Deploy** workflow runs automatically:
 
 ---
 
-### 5. Store GitHub App secrets in Key Vault
+### 6. Store GitHub App secrets in Key Vault
 
 ```bash
 KV=kv-runner-poc-bvt   # your Key Vault name
@@ -171,7 +227,7 @@ The Function App is granted `Key Vault Secrets User` automatically by this modul
 
 ---
 
-### 6. Register the webhook in GitHub
+### 7. Register the webhook in GitHub
 
 From the Terraform output:
 

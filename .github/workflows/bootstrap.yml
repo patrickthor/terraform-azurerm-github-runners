@@ -79,11 +79,34 @@ jobs:
           use_existing_storage       = $SKIP_CREATE
           EOF
 
+      - name: Create resource group (idempotent)
+        env:
+          RG:       ${{ vars.AZURE_RESOURCE_GROUP }}
+          LOCATION: ${{ vars.AZURE_LOCATION }}
+        run: az group create --name "$RG" --location "$LOCATION"
+
       - name: Terraform init
         run: terraform init -input=false
 
       - name: Terraform apply
         run: terraform apply -auto-approve -input=false
+
+      - name: Grant CI identity Storage Blob Data Contributor on state storage
+        # Required so the Deploy workflow can authenticate to the remote backend
+        # using AAD (use_azuread_auth = true in providers.tf).
+        env:
+          CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          STORAGE:   ${{ vars.STATE_STORAGE_ACCOUNT_NAME }}
+          RG:        ${{ vars.AZURE_RESOURCE_GROUP }}
+        run: |
+          PRINCIPAL_ID=$(az ad sp show --id "$CLIENT_ID" --query id -o tsv)
+          STORAGE_ID=$(az storage account show --name "$STORAGE" --resource-group "$RG" --query id -o tsv)
+          az role assignment create \
+            --assignee-object-id "$PRINCIPAL_ID" \
+            --assignee-principal-type ServicePrincipal \
+            --role "Storage Blob Data Contributor" \
+            --scope "$STORAGE_ID" \
+            --condition-version "2.0" 2>/dev/null || echo "Role already assigned."
 
       - name: Print backend config snippet
         run: terraform output -raw backend_hcl_snippet
