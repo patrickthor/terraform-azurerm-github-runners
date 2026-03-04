@@ -46,6 +46,12 @@ jobs:
     name: "Stage 2 — Infrastructure"
     runs-on: ubuntu-latest
 
+    env:
+      ARM_USE_OIDC:       true
+      ARM_CLIENT_ID:      ${{ secrets.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID:      ${{ secrets.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
     outputs:
       function_app_name:  ${{ steps.tf-output.outputs.function_app_name }}
       resource_group:     ${{ vars.AZURE_RESOURCE_GROUP }}
