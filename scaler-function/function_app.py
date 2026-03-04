@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import concurrent.futures
 import datetime as dt
 import base64
 import hashlib
@@ -130,17 +131,20 @@ def _list_runners() -> list[dict[str, Any]]:
         if item.get("name", "").startswith(prefix + "-")
     ]
     # The list endpoint omits instanceView; fetch each individually to get full state.
-    result = []
-    for item in items:
+    # Use a thread pool so all GETs fire in parallel rather than sequentially.
+    def _fetch_detail(item: dict[str, Any]) -> dict[str, Any]:
         name = item.get("name", "")
         try:
             detail_path = f"/resourceGroups/{rg}/providers/Microsoft.ContainerInstance/containerGroups/{name}?api-version={ARM_API_VERSION}"
-            detail_resp = _arm_request("GET", detail_path)
-            result.append(detail_resp.json())
+            return _arm_request("GET", detail_path).json()
         except Exception:
             logging.warning("Failed to GET individual runner %s; using list data", name)
-            result.append(item)
-    return result
+            return item
+
+    if not items:
+        return []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(10, len(items))) as pool:
+        return list(pool.map(_fetch_detail, items))
 
 
 def _parse_github_timestamp(value: str) -> dt.datetime:
@@ -440,7 +444,13 @@ def _create_runner(workflow_job_id: str = "") -> str:
     }
 
     path = f"/resourceGroups/{rg}/providers/Microsoft.ContainerInstance/containerGroups/{runner_name}?api-version={ARM_API_VERSION}"
-    _arm_request("PUT", path, body)
+    try:
+        _arm_request("PUT", path, body)
+    except requests.HTTPError as exc:
+        if exc.response is not None and exc.response.status_code == 409:
+            logging.info("Runner %s already exists (409 conflict); treating as idempotent", runner_name)
+        else:
+            raise
     logging.info("Created runner %s", runner_name)
     return runner_name
 
