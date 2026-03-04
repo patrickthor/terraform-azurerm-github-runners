@@ -258,11 +258,13 @@ def _prune_stale_runners(runners: list[dict[str, Any]]) -> int:
 
 
 def _has_runner_for_workflow_job(runners: list[dict[str, Any]], workflow_job_id: str) -> bool:
+    """Return True only if a non-terminal runner already exists for this job."""
     if not workflow_job_id:
         return False
     for runner in runners:
         if _runner_workflow_job_id(runner) == workflow_job_id:
-            return True
+            if _runner_state(runner) not in TERMINAL_RUNNER_STATES:
+                return True
     return False
 
 
