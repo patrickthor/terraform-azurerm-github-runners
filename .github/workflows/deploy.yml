@@ -45,6 +45,7 @@ jobs:
   infra:
     name: "Stage 2 — Infrastructure"
     runs-on: ubuntu-latest
+    environment: production
 
     outputs:
       function_app_name:  ${{ steps.tf-output.outputs.function_app_name }}
@@ -142,6 +143,7 @@ jobs:
     name: "Stage 3 — Function App code"
     needs: infra
     runs-on: ubuntu-latest
+    environment: production
 
     defaults:
       run:
