@@ -479,7 +479,10 @@ def _scale_once(scale_hint: int = 0, workflow_job_id: str = "") -> dict[str, Any
     current = len(active_runners)
 
     queue_backlog = _servicebus_active_message_count()
-    requested_parallel = max(0, scale_hint) + max(0, queue_backlog)
+    # Use max, not sum: each queued message gets its own scale_worker invocation
+    # (maxConcurrentCalls=1 ensures serial execution). Adding them would cause
+    # a single invocation to over-provision for jobs that will be handled later.
+    requested_parallel = max(scale_hint, queue_backlog)
     desired = max(min_instances, min(max_instances, requested_parallel))
 
     created = 0
