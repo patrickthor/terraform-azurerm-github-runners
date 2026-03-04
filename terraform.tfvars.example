@@ -1,0 +1,21 @@
+# Copy to terraform.tfvars (which is gitignored) and fill in your values.
+
+resource_group_name  = "rg-runner-poc-bvt"
+location             = "westeurope"
+acr_name             = "crrunnerpocbvt"        # no hyphens — ACR allows alphanumeric only
+aci_name             = "ci-runner-poc-bvt"     # container instance prefix; also seeds asp/appi/id names
+key_vault_name       = "kv-runner-poc-bvt"
+storage_account_name = "strunnerpocbvt"        # state storage (managed by bootstrap)
+
+github_org  = "your-github-org"
+github_repo = "your-github-org/your-repo"
+
+servicebus_namespace_name     = "sbns-runner-poc-bvt"
+function_app_name             = "func-runner-poc-bvt"
+function_storage_account_name = "stfnrunnerpocbvt"  # no hyphens — Storage allows alphanumeric only
+
+# Optional — override defaults as needed:
+# runner_completed_ttl_minutes = 5
+# max_runner_runtime_hours     = 2
+# runner_min_instances         = 0
+# runner_max_instances         = 10

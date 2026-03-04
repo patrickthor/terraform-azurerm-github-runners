@@ -1,0 +1,18 @@
+# Copy to terraform.tfvars (which is gitignored) and fill in your values.
+
+resource_group_name        = "rg-runner-poc-bvt"
+location                   = "westeurope"
+state_storage_account_name = "strunnerpocbvt"
+
+# Set to true when the storage account already exists (e.g. a previous bootstrap
+# run, or an account you provisioned manually). Bootstrap will adopt it and only
+# ensure the blob container.
+use_existing_storage = false
+
+# state_container_name = "tfstate"   # default, change if needed
+# storage_account_replication_type = "LRS"
+
+tags = {
+  Environment = "poc"
+  ManagedBy   = "terraform-bootstrap"
+}

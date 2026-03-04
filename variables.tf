@@ -18,7 +18,7 @@ variable "acr_name" {
 }
 
 variable "aci_name" {
-  description = "Name prefix for dynamically created Azure Container Instance runners"
+  description = "Base name for dynamically created Azure Container Instance runners (follows ci-{workload}-{env}-{instance} convention). Also used to derive the managed identity, App Service plan, and Application Insights names."
   type        = string
 }
 

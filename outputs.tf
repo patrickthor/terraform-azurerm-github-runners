@@ -19,8 +19,8 @@ output "key_vault_id" {
 }
 
 output "storage_account_id" {
-  description = "The ID of the primary Storage Account"
-  value       = azurerm_storage_account.storage.id
+  description = "The ID of the Terraform-state storage account (managed by bootstrap)."
+  value       = data.azurerm_storage_account.state.id
 }
 
 output "function_storage_account_id" {

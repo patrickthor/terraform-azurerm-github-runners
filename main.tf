@@ -109,39 +109,14 @@ resource "azurerm_key_vault" "kv" {
   tags = var.tags
 }
 
-resource "azurerm_storage_account" "storage" {
-  name                            = var.storage_account_name
-  resource_group_name             = var.resource_group_name
-  location                        = var.location
-  account_tier                    = "Standard"
-  account_replication_type        = var.storage_account_replication_type
-  account_kind                    = "StorageV2"
-  min_tls_version                 = "TLS1_2"
-  https_traffic_only_enabled      = true
-  public_network_access_enabled   = var.enable_public_network_access
-  shared_access_key_enabled       = false
-  allow_nested_items_to_be_public = false
-
-  identity {
-    type = "SystemAssigned"
-  }
-
-  blob_properties {
-    versioning_enabled = true
-    delete_retention_policy {
-      days = 7
-    }
-    container_delete_retention_policy {
-      days = 7
-    }
-  }
-
-  network_rules {
-    default_action = "Deny"
-    bypass         = ["AzureServices"]
-  }
-
-  tags = var.tags
+# The state storage account is provisioned by the bootstrap module.
+# This data source lets the main module reference it (e.g. for outputs) without
+# owning it.  If you are migrating an existing environment, run:
+#   terraform state rm azurerm_storage_account.storage   (old resource name)
+# before your first apply with this backend configuration.
+data "azurerm_storage_account" "state" {
+  name                = var.storage_account_name
+  resource_group_name = var.resource_group_name
 }
 
 # ==============================================================================
@@ -179,7 +154,7 @@ resource "azurerm_servicebus_namespace_authorization_rule" "scaler" {
 # ==============================================================================
 
 resource "azurerm_user_assigned_identity" "runner_pull" {
-  name                = "${var.aci_name}-acr-pull"
+  name                = "id-${trimprefix(var.aci_name, "ci-")}"
   location            = var.location
   resource_group_name = var.resource_group_name
 
@@ -214,7 +189,7 @@ resource "azurerm_storage_account" "functions" {
 }
 
 resource "azurerm_service_plan" "functions" {
-  name                = "${var.aci_name}-scaler-plan"
+  name                = "asp-${trimprefix(var.aci_name, "ci-")}"
   location            = var.location
   resource_group_name = var.resource_group_name
   os_type             = "Linux"
@@ -224,7 +199,7 @@ resource "azurerm_service_plan" "functions" {
 }
 
 resource "azurerm_application_insights" "scaler" {
-  name                = "${var.aci_name}-scaler-ai"
+  name                = "appi-${trimprefix(var.aci_name, "ci-")}"
   location            = var.location
   resource_group_name = var.resource_group_name
   application_type    = "web"

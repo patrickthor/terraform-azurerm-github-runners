@@ -1,0 +1,14 @@
+# Terraform remote backend configuration.
+# Copy this file to backend.hcl, fill in your values, then run:
+#   terraform init -backend-config=backend.hcl
+#
+# You can get the exact values to paste here by running:
+#   cd bootstrap && terraform output -raw backend_hcl_snippet
+#
+# backend.hcl is gitignored — never commit it.
+
+resource_group_name  = "rg-runner-poc-bvt"
+storage_account_name = "strunnerpocbvt"
+container_name       = "tfstate"
+key                  = "github-runners.tfstate"
+use_azuread_auth     = true
