@@ -26,18 +26,20 @@ Azure Function App (cleanup_timer)  [runs every 5 min]
 
 **Provisioned resources**
 
-| Resource | Name pattern | Purpose |
-|---|---|---|
-| Resource group | `rg-{workload}-{env}-{instance}` | Container for all resources |
-| Container Registry | `cr{workload}{env}{instance}` | Runner image store |
-| Key Vault | `kv-{workload}-{env}-{instance}` | GitHub App credentials |
-| Service Bus namespace | `sbns-{workload}-{env}-{instance}` | Scale request queue |
-| Function App | `func-{workload}-{env}-{instance}` | Control plane |
-| Function storage | `st{...}` | Functions runtime storage |
-| App Service plan | `asp-{workload}-{env}-{instance}` | Consumption Y1 (Linux) |
-| Application Insights | `appi-{workload}-{env}-{instance}` | Telemetry |
-| Managed identity | `id-{workload}-{env}-{instance}` | ACI → ACR pull |
-| State storage | `st{...}` (bootstrap) | Terraform remote state |
+| Resource | Name pattern | Example (`poc` / `bvt`) | Purpose |
+|---|---|---|---|
+| Resource group | `rg-{workload}-{env}-{instance}` | `rg-runner-poc-bvt` | Container for all resources |
+| Container Registry | `cr{workload}{env}{instance}` | `crrunnerpocbvt` | Runner image store |
+| Key Vault | `kv-{workload}-{env}-{instance}` | `kv-runner-poc-bvt` | GitHub App credentials |
+| Service Bus namespace | `sbns-{workload}-{env}-{instance}` | `sbns-runner-poc-bvt` | Scale request queue |
+| Function App | `func-{workload}-{env}-{instance}` | `func-runner-poc-bvt` | Control plane |
+| Function storage | `stfn{workload}{env}{instance}` | `stfnrunnerpocbvt` | Functions runtime storage |
+| App Service plan | `asp-{workload}-{env}-{instance}` | `asp-runner-poc-bvt` | Consumption Y1 (Linux) |
+| Application Insights | `appi-{workload}-{env}-{instance}` | `appi-runner-poc-bvt` | Telemetry |
+| Managed identity | `id-{workload}-{env}-{instance}` | `id-runner-poc-bvt` | ACI → ACR pull |
+| State storage | `st{workload}{env}{instance}` (bootstrap) | `strunnerpocbvt` | Terraform remote state |
+| GitHub App | `ghapp-{workload}-{env}-{instance}` | `ghapp-runner-poc-bvt` | Issues runner tokens |
+| Azure service principal | `sp-{workload}-{env}-{instance}` | `sp-runner-poc-bvt` | CI/CD identity (OIDC) |
 
 ---
 
@@ -59,6 +61,8 @@ If you don't already have one:
 
 - Personal: `https://github.com/settings/apps/new`
 - Organisation: `https://github.com/organizations/<org>/settings/apps/new`
+
+**Naming convention**: `ghapp-{workload}-{env}-{instance}` → e.g. `ghapp-runner-poc-bvt`
 
 Minimum permissions:
 - `Repository → Administration: Read and write` (required — mints runner registration tokens)
@@ -129,36 +133,21 @@ echo "AZURE_SUBSCRIPTION_ID: $SUBSCRIPTION_ID"
 
 ---
 
-### 3. Bootstrap — provision remote state storage
+### 3. Configure GitHub Actions variables and secrets
 
-The bootstrap module creates the Storage Account and blob container that holds Terraform remote state. It runs with **local state** by design and only needs to run once per environment.
-
-```bash
-cd bootstrap
-cp terraform.tfvars.example terraform.tfvars   # fill in rg, location, storage name
-terraform init
-terraform apply
-```
-
-If the storage account already exists (e.g. re-running on an existing environment), set `use_existing_storage = true` in `bootstrap/terraform.tfvars` — the module will adopt it instead of creating it.
-
-The bootstrap workflow will print a backend config snippet at the end — you can use this to verify values match your GitHub variables.
-
----
-
-### 4. Configure GitHub Actions variables and secrets
+**Do this before running any workflow** — Bootstrap needs the secrets to authenticate to Azure.
 
 In your repository go to **Settings → Secrets and variables → Actions**.
 
-**Secrets** (sensitive):
+**Secrets** (sensitive) — add under *Repository secrets*:
 
 | Secret | Value |
 |---|---|
-| `AZURE_CLIENT_ID` | App Registration or managed identity client ID |
-| `AZURE_TENANT_ID` | Azure AD tenant ID |
-| `AZURE_SUBSCRIPTION_ID` | Target subscription ID |
+| `AZURE_CLIENT_ID` | App Registration client ID (printed at end of step 2) |
+| `AZURE_TENANT_ID` | Azure AD tenant ID (printed at end of step 2) |
+| `AZURE_SUBSCRIPTION_ID` | Target subscription ID (printed at end of step 2) |
 
-**Variables** (non-sensitive):
+**Variables** (non-sensitive) — add under *Repository variables*:
 
 | Variable | Example value |
 |---|---|
@@ -174,6 +163,24 @@ In your repository go to **Settings → Secrets and variables → Actions**.
 | `SERVICEBUS_NAMESPACE_NAME` | `sbns-runner-poc-bvt` |
 | `GITHUB_ORG` | `your-org` |
 | `GITHUB_REPO` | `your-org/your-repo` |
+
+---
+
+### 4. Bootstrap — provision remote state storage
+
+The bootstrap module creates the Storage Account and blob container that holds Terraform remote state. It uses **local state** by design and only needs to run once per environment.
+
+**Requires Step 3 secrets to be configured first.**
+
+Trigger via GitHub Actions: **Actions → Bootstrap → Run workflow** (leave *skip_create* unchecked for a first run).
+
+The workflow will:
+- Create the resource group (idempotent)
+- Run `terraform apply` in `bootstrap/` to provision the storage account and blob container
+- Grant the CI identity `Storage Blob Data Contributor` on the state storage
+- Print the backend config snippet in the job summary
+
+If the storage account already exists from a previous run, check *skip_create* — the workflow will adopt it without recreating it.
 
 > Paste the values printed at the end of step 2 as the three secrets.
 
@@ -191,7 +198,7 @@ Push any commit to `main` — the **Deploy** workflow runs automatically:
 ### 6. Store GitHub App secrets in Key Vault
 
 ```bash
-KV=kv-runner-poc-bvt   # your Key Vault name
+KV=<key-vault-name>   # your Key Vault name
 
 # Grant yourself write access (once)
 az role assignment create \

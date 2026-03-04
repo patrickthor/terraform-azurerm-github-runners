@@ -40,7 +40,6 @@ jobs:
   bootstrap:
     name: Provision state storage
     runs-on: ubuntu-latest
-    environment: production
 
     defaults:
       run:
