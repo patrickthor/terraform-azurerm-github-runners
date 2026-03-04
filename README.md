@@ -161,8 +161,8 @@ In your repository go to **Settings → Secrets and variables → Actions**.
 | `FUNCTION_STORAGE_ACCOUNT_NAME` | `stfnrunnerpocbvt` |
 | `FUNCTION_APP_NAME` | `func-runner-poc-bvt` |
 | `SERVICEBUS_NAMESPACE_NAME` | `sbns-runner-poc-bvt` |
-| `GITHUB_ORG` | `your-org` |
-| `GITHUB_REPO` | `your-org/your-repo` |
+| `GH_ORG` | `your-org` |
+| `GH_REPO` | `your-org/your-repo` |
 
 ---
 

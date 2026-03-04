@@ -22,8 +22,8 @@
 #     FUNCTION_STORAGE_ACCOUNT_NAME    — e.g. stfnrunnerpocbvt
 #     FUNCTION_APP_NAME                — e.g. func-runner-poc-bvt
 #     SERVICEBUS_NAMESPACE_NAME        — e.g. sbns-runner-poc-bvt
-#     GITHUB_ORG                       — e.g. patrickthor
-#     GITHUB_REPO                      — e.g. patrickthor/github-runners
+#     GH_ORG                           — e.g. patrickthor
+#     GH_REPO                          — e.g. patrickthor/github-runners
 # ==============================================================================
 
 name: Deploy
@@ -93,8 +93,8 @@ jobs:
           FUNC_ST:         ${{ vars.FUNCTION_STORAGE_ACCOUNT_NAME }}
           FUNC_APP:        ${{ vars.FUNCTION_APP_NAME }}
           SBNS:            ${{ vars.SERVICEBUS_NAMESPACE_NAME }}
-          GH_ORG:          ${{ vars.GITHUB_ORG }}
-          GH_REPO:         ${{ vars.GITHUB_REPO }}
+          GH_ORG:          ${{ vars.GH_ORG }}
+          GH_REPO:         ${{ vars.GH_REPO }}
         run: |
           cat > terraform.tfvars <<EOF
           resource_group_name           = "$RG"
