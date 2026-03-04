@@ -1,251 +1,319 @@
-# Event-Driven Ephemeral Runners on Azure
+# Event-Driven Ephemeral GitHub Runners on Azure
 
-Terraform module for an event-driven autoscaling runner platform on Azure.
+Terraform module that provisions a fully event-driven, autoscaling GitHub Actions runner platform on Azure. A Function App ingests GitHub webhook events, queues scale requests, and dynamically creates or destroys ephemeral Azure Container Instance (ACI) runners on demand.
 
 ## Architecture
 
-This module provisions:
-
-- Azure Container Registry (runner image source)
-- Shared user-assigned identity for dynamic runner pulls from ACR
-- Service Bus namespace + queue for scale requests
-- Azure Function App (scaler/controller) that consumes queue messages and manages runner lifecycle
-- Supporting storage, Key Vault, and RBAC
-
-The Function App is the control plane. It receives job events (direct webhook ingestion or queue push), decides desired capacity, and creates/deletes ephemeral ACI runners on demand.
-
-## What changed
-
-This module is now **event-driven only**:
-
-- No statically declared `azurerm_container_group.runner` fleet in Terraform
-- No Azure Automation runbook cleanup path
-- Runner lifecycle is delegated to the scaler Function App
-
-## Authentication
-
-Runner containers use only one auth model:
-
-- on-demand registration tokens minted by GitHub App credentials
-
-For control-plane self-refresh, configure GitHub App auth:
-
-- `github_app_id_secret_name` + `github_app_installation_id_secret_name` + `github_app_private_key_secret_name`
-
-The scaler requests a fresh registration token from GitHub automatically before creating runners.
-
-### Key Vault wiring (recommended)
-
-This module uses Key Vault references in Function App settings for sensitive auth values.
-
-Provide existing secret names:
-
-- `github_app_id_secret_name`
-- `github_app_installation_id_secret_name`
-- `github_app_private_key_secret_name`
-- `webhook_secret_secret_name` (optional)
-
-Key Vault reference URIs are built automatically from your module Key Vault (`key_vault_name`) and these secret names.
-
-Default secret names used by this setup:
-
-- `runnerpocbouvet-github-app-id` (GitHub App ID)
-- `runnerpocbouvet-github-app-installation-id` (GitHub App Installation ID)
-- `runnerpocbouvet-github-app-private-key` (GitHub App private key)
-- `runnerpocbouvet-webhook-secret` (optional webhook secret)
-
-The Function App is granted `Key Vault Secrets User` role on the module Key Vault.
-
-## Required variables
-
-- `resource_group_name`
-- `location`
-- `acr_name`
-- `aci_name`
-- `key_vault_name`
-- `storage_account_name`
-- `function_storage_account_name`
-- `function_app_name`
-- `servicebus_namespace_name`
-- `github_org`
-- `github_repo`
-- `github_app_id_secret_name`
-- `github_app_installation_id_secret_name`
-- `github_app_private_key_secret_name`
-- `webhook_secret_secret_name` (optional)
-
-Sensitive values are expected from Key Vault secret names.
-
-## Core autoscaling variables
-
-- `runner_min_instances`
-- `runner_max_instances`
-- `runner_idle_timeout_minutes`
-- `cpu`
-- `memory`
-- `runner_labels`
-
-Default behavior uses `runner_min_instances = 0` so a single queued event scales to a single new runner.
-
-## Quick start
-
-### 1) Configure auth
-
-Recommended (self-refresh):
-
-```bash
-export TF_VAR_github_app_id_secret_name="runnerpocbouvet-github-app-id"
-export TF_VAR_github_app_installation_id_secret_name="runnerpocbouvet-github-app-installation-id"
-export TF_VAR_github_app_private_key_secret_name="runnerpocbouvet-github-app-private-key"
-export TF_VAR_webhook_secret_secret_name="runnerpocbouvet-webhook-secret" # optional
+```
+GitHub Webhook
+     │
+     ▼
+Azure Function App (github_webhook)
+     │  enqueues scale request
+     ▼
+Service Bus Queue
+     │
+     ▼
+Azure Function App (scale_worker)
+     │  create / delete ACI runners
+     ▼
+Azure Container Instances  ──►  ACR (actions-runner image)
+     │
+     ▼
+Azure Function App (cleanup_timer)  [runs every 5 min]
+     │  removes stale / completed runners
 ```
 
-Grant yourself permission to add secrets to Key Vault (required once):
+**Provisioned resources**
+
+| Resource | Name pattern | Purpose |
+|---|---|---|
+| Resource group | `rg-{workload}-{env}-{instance}` | Container for all resources |
+| Container Registry | `cr{workload}{env}{instance}` | Runner image store |
+| Key Vault | `kv-{workload}-{env}-{instance}` | GitHub App credentials |
+| Service Bus namespace | `sbns-{workload}-{env}-{instance}` | Scale request queue |
+| Function App | `func-{workload}-{env}-{instance}` | Control plane |
+| Function storage | `st{...}` | Functions runtime storage |
+| App Service plan | `asp-{workload}-{env}-{instance}` | Consumption Y1 (Linux) |
+| Application Insights | `appi-{workload}-{env}-{instance}` | Telemetry |
+| Managed identity | `id-{workload}-{env}-{instance}` | ACI → ACR pull |
+| State storage | `st{...}` (bootstrap) | Terraform remote state |
+
+---
+
+## Prerequisites
+
+- [Terraform](https://developer.hashicorp.com/terraform/install) >= 1.0
+- [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli) (logged in: `az login`)
+- [Azure Functions Core Tools v4](https://learn.microsoft.com/en-us/azure/azure-functions/functions-run-local) (`npm i -g azure-functions-core-tools@4`)
+- A GitHub App with `Administration: Read and write` + `Actions: Read` repository permissions
+
+
+---
+
+## Fresh deployment — step by step
+
+### 1. Create a GitHub App
+
+If you don't already have one:
+
+- Personal: `https://github.com/settings/apps/new`
+- Organisation: `https://github.com/organizations/<org>/settings/apps/new`
+
+Minimum permissions:
+- `Repository → Administration: Read and write` (required — mints runner registration tokens)
+- `Repository → Actions: Read` (recommended)
+
+Disable the webhook on the App unless you have a separate use for it — this module receives webhooks directly on the Function App.
+
+Install the app on the target repository. After creation collect:
+- **App ID** (shown on the app settings page)
+- **Installation ID**: `gh api /repos/<org>/<repo>/installation --jq .id`
+- **Private key PEM** (generate from the app settings page)
+
+---
+
+### 2. Bootstrap — provision remote state storage
+
+The bootstrap module creates the Storage Account and blob container that holds Terraform remote state. It runs with **local state** by design and only needs to run once per environment.
 
 ```bash
-az role assignment create \
-	--assignee $(az ad signed-in-user show --query id -o tsv) \
-	--role "Key Vault Secrets Officer" \
-	--scope $(az keyvault show --name <key_vault_name> --query id -o tsv)
+cd bootstrap
+cp terraform.tfvars.example terraform.tfvars   # fill in rg, location, storage name
+terraform init
+terraform apply
 ```
 
-If your tenant does not allow `signed-in-user`, use your user object id directly in `--assignee`.
+If the storage account already exists (e.g. re-running on an existing environment), set `use_existing_storage = true` in `bootstrap/terraform.tfvars` — the module will adopt it instead of creating it.
 
-Create those secrets manually in Key Vault (example):
+Generate the backend config file:
 
 ```bash
-az keyvault secret set --vault-name <key_vault_name> --name runnerpocbouvet-github-app-id --value "<github_app_id>"
-az keyvault secret set --vault-name <key_vault_name> --name runnerpocbouvet-github-app-installation-id --value "<github_app_installation_id>"
-az keyvault secret set --vault-name <key_vault_name> --name runnerpocbouvet-github-app-private-key --file <path/to/github-app-private-key.pem>
-az keyvault secret set --vault-name <key_vault_name> --name runnerpocbouvet-webhook-secret --value "<webhook_secret>" # optional
+terraform output -raw backend_hcl_snippet > ../backend.hcl
+cd ..
 ```
 
-#### Create the GitHub App
+---
 
-If you do not see where to create one, use these direct links:
-
-- Personal account app page: `https://github.com/settings/apps/new`
-- Organization app page: `https://github.com/organizations/<org>/settings/apps/new`
-
-UI path:
-
-- Profile photo -> `Settings` -> `Developer settings` -> `GitHub Apps` -> `New GitHub App`
-
-Recommended form values:
-
-- **GitHub App name**: `azure-ephemeral-runner-scaler` (or similar)
-- **Homepage URL**: your repo URL
-- **Webhook**:
-	- disable if this app is only used for token minting
-	- enable only if you plan to consume GitHub App webhooks separately
-
-Minimum permissions for this runner scaler:
-
-- Repository permissions:
-	- `Administration: Read and write` (required to mint runner registration tokens)
-	- `Actions: Read` (recommended)
-
-Installation scope best practice:
-
-- Install only on the repositories that need ephemeral runners (least privilege)
-
-After creating and installing the app, collect:
-
-- `App ID`
-- `Installation ID`
-- generated private key PEM file
-
-Quick ways to find `Installation ID`:
-
-- From app install URL in GitHub UI
-- CLI: `gh api /repos/<org>/<repo>/installation --jq .id`
-
-If the create page is missing in an organization, an org owner (or delegated app manager) must create/install the app and share those values.
-
-Quick verification before Terraform apply:
+### 3. Configure main module
 
 ```bash
-gh api /repos/<org>/<repo>/installation --jq .id
+cp terraform.tfvars.example terraform.tfvars
 ```
 
-If this returns an installation id, the app is installed correctly on that repo.
-
-### 2) Configure terraform.tfvars
-
-Example:
+Edit `terraform.tfvars`:
 
 ```hcl
-resource_group_name           = "rg-github-runners"
-location                      = "westeurope"
-acr_name                      = "runneracr001"
-aci_name                      = "runner"
-key_vault_name                = "kv-runner-001"
-storage_account_name          = "strunnerstate001"
-function_storage_account_name = "strunnerscaler001"
-function_app_name             = "runner-scaler-func-001"
-servicebus_namespace_name     = "runner-scale-bus-001"
+resource_group_name  = "rg-runner-poc-bvt"
+location             = "westeurope"
+acr_name             = "crrunnerpocbvt"       # alphanumeric only
+aci_name             = "ci-runner-poc-bvt"    # also seeds id-, asp-, appi- names
+key_vault_name       = "kv-runner-poc-bvt"
+storage_account_name = "strunnerpocbvt"       # state storage (managed by bootstrap)
 
 github_org  = "your-org"
 github_repo = "your-org/your-repo"
 
-runner_min_instances        = 0
-runner_max_instances        = 20
-runner_idle_timeout_minutes = 15
+servicebus_namespace_name     = "sbns-runner-poc-bvt"
+function_app_name             = "func-runner-poc-bvt"
+function_storage_account_name = "stfnrunnerpocbvt"   # alphanumeric only
+
+runner_min_instances = 0
+runner_max_instances = 10
 ```
 
-### 3) Deploy
+---
+
+### 4. Deploy infrastructure
 
 ```bash
-terraform init
+terraform init -backend-config=backend.hcl
 terraform plan
 terraform apply
 ```
 
-## Runner token rotation
+Or use the Makefile:
 
-Registration token minting is automatic in the scaler via GitHub App credentials.
+```bash
+make infra
+```
 
-## Runner image import on apply
+---
 
-This module always imports the runner image into ACR during `terraform apply`.
+### 5. Store GitHub App secrets in Key Vault
 
-- source image is fixed to `ghcr.io/myoung34/docker-github-actions-runner:latest`
-- target image/tag is fixed to `actions-runner:latest`
+```bash
+KV=kv-runner-poc-bvt   # your Key Vault name
 
-The scaler always uses `${acr_login_server}/actions-runner:latest`.
+# Grant yourself write access (once)
+az role assignment create \
+  --assignee $(az ad signed-in-user show --query id -o tsv) \
+  --role "Key Vault Secrets Officer" \
+  --scope $(az keyvault show --name $KV --query id -o tsv)
 
-Note: this uses local Azure CLI from the machine running Terraform (`az acr import ...`).
+# Store secrets
+az keyvault secret set --vault-name $KV \
+  --name runnerpocbouvet-github-app-id --value "<APP_ID>"
 
-## Post-deploy integration
+az keyvault secret set --vault-name $KV \
+  --name runnerpocbouvet-github-app-installation-id --value "<INSTALLATION_ID>"
 
-You must deploy scaler function code that:
+az keyvault secret set --vault-name $KV \
+  --name runnerpocbouvet-github-app-private-key --file <path/to/private-key.pem>
 
-- accepts webhook/job events and enqueues scale requests
-- processes queue messages
-- creates/deletes ACI runner instances using ARM
-- enforces min/max/idle policies
+# Optional — webhook signature validation
+az keyvault secret set --vault-name $KV \
+  --name runnerpocbouvet-webhook-secret --value "<WEBHOOK_SECRET>"
+```
 
-This module provisions the infrastructure and RBAC for that flow.
+Default secret names expected by this module:
 
-The repository now includes a starter scaffold under:
+| Variable | Default secret name |
+|---|---|
+| `github_app_id_secret_name` | `runnerpocbouvet-github-app-id` |
+| `github_app_installation_id_secret_name` | `runnerpocbouvet-github-app-installation-id` |
+| `github_app_private_key_secret_name` | `runnerpocbouvet-github-app-private-key` |
+| `webhook_secret_secret_name` | *(optional, set to `null` to disable)* |
 
-- `scaler-function/function_app.py`
-- `scaler-function/host.json`
-- `scaler-function/requirements.txt`
-- `scaler-function/local.settings.example.json`
+The Function App is granted `Key Vault Secrets User` automatically by this module.
 
-Use that scaffold as the deployment package for `azurerm_linux_function_app.scaler`.
+---
+
+### 6. Deploy the Function App code
+
+```bash
+cd scaler-function
+func azure functionapp publish func-runner-poc-bvt --python --build remote
+```
+
+Or:
+
+```bash
+make deploy
+```
+
+---
+
+### 7. Register the webhook in GitHub
+
+From the Terraform output:
+
+```bash
+terraform output function_app_default_hostname
+```
+
+In your GitHub repository: **Settings → Webhooks → Add webhook**
+
+- **Payload URL**: `https://<hostname>/api/webhook/github?code=<function_key>`
+- **Content type**: `application/json`
+- **Events**: `Workflow jobs`
+
+Retrieve the function key:
+
+```bash
+az functionapp function keys list \
+  --resource-group rg-runner-poc-bvt \
+  --name func-runner-poc-bvt \
+  --function-name github_webhook \
+  --query default -o tsv
+```
+
+---
+
+## Makefile targets
+
+```
+make bootstrap       # Step 2 — provision remote state storage
+make infra           # Step 4 — init + apply main module
+make deploy          # Step 6 — publish Function App code
+make all             # bootstrap → infra → deploy
+
+make migrate-state   # One-time: remove azurerm_storage_account.storage from
+                     # existing local state before switching to remote backend
+```
+
+---
+
+## Variables reference
+
+### Required
+
+| Variable | Description |
+|---|---|
+| `resource_group_name` | Azure resource group |
+| `location` | Azure region (e.g. `westeurope`) |
+| `acr_name` | Container Registry name — alphanumeric only, globally unique |
+| `aci_name` | ACI runner name prefix; seeds `id-`, `asp-`, `appi-` names |
+| `key_vault_name` | Key Vault name — globally unique |
+| `storage_account_name` | State storage account name (provisioned by bootstrap) |
+| `function_storage_account_name` | Function App runtime storage — alphanumeric only, globally unique |
+| `function_app_name` | Function App name — globally unique |
+| `servicebus_namespace_name` | Service Bus namespace name — globally unique |
+| `github_org` | GitHub organisation name |
+| `github_repo` | Repository in `org/repo` format |
+| `github_app_id_secret_name` | Key Vault secret name for GitHub App ID |
+| `github_app_installation_id_secret_name` | Key Vault secret name for installation ID |
+| `github_app_private_key_secret_name` | Key Vault secret name for private key PEM |
+
+### Optional
+
+| Variable | Default | Description |
+|---|---|---|
+| `webhook_secret_secret_name` | `null` | Key Vault secret name for webhook HMAC validation |
+| `runner_min_instances` | `0` | Minimum live runners |
+| `runner_max_instances` | `10` | Maximum live runners |
+| `runner_idle_timeout_minutes` | `15` | Minutes before idle runner is terminated |
+| `runner_completed_ttl_minutes` | `5` | Minutes to retain a completed runner before deletion |
+| `max_runner_runtime_hours` | `2` | Hard cap on runner lifetime |
+| `cpu` | `2` | CPU cores per runner |
+| `memory` | `4` | Memory (GB) per runner |
+| `runner_labels` | `azure,container-instance,self-hosted` | Comma-separated runner labels |
+| `acr_sku` | `Standard` | Container Registry SKU |
+| `storage_account_replication_type` | `LRS` | State storage replication |
+| `enable_public_network_access` | `true` | Set to `false` for private endpoint environments |
+| `tags` | `{Environment, ManagedBy, Purpose}` | Common resource tags |
+
+---
 
 ## Outputs
 
-- `function_app_name`
-- `function_app_default_hostname`
-- `servicebus_namespace_name`
-- `servicebus_queue_name`
-- `runner_pull_identity`
-- `acr_login_server`
+| Output | Description |
+|---|---|
+| `function_app_name` | Function App name |
+| `function_app_default_hostname` | Function App hostname (use for webhook URL) |
+| `acr_login_server` | ACR login server URL |
+| `acr_id` | ACR resource ID |
+| `key_vault_uri` | Key Vault URI |
+| `key_vault_id` | Key Vault resource ID |
+| `servicebus_namespace_name` | Service Bus namespace name |
+| `servicebus_queue_name` | Service Bus queue name |
+| `storage_account_id` | State storage account ID |
+| `function_storage_account_id` | Function App storage account ID |
 
-## Notes
+---
 
-- Existing pipelines that expected static `runner_names` outputs must be updated.
-- Legacy cleanup/runbook resources were intentionally removed in favor of event-driven control.
+## Runner image
+
+On every `terraform apply`, this module imports the public runner image into ACR:
+
+- **Source**: `ghcr.io/myoung34/docker-github-actions-runner:latest`
+- **Target**: `<acr_login_server>/actions-runner:latest`
+
+The Function App always uses the ACR-hosted image. To use a custom image, push it to ACR as `actions-runner:latest` before runners are needed.
+
+---
+
+## Scaler function internals
+
+The control plane (`scaler-function/function_app.py`) has three functions:
+
+| Function | Trigger | Role |
+|---|---|---|
+| `github_webhook` | HTTP | Validates signature, filters to `self-hosted` jobs, enqueues scale request |
+| `scale_worker` | Service Bus | Deduplicates runners per job, computes desired count, creates/deletes ACI |
+| `cleanup_timer` | Timer (5 min) | Removes completed, stale, or over-TTL runners |
+
+Key behaviours:
+- `maxConcurrentCalls: 1` on the Service Bus trigger prevents duplicate scale operations
+- Scale formula: `max(scale_hint, queue_backlog)` — never sums, avoids over-provisioning
+- Non-terminal runner deduplication — terminated containers are not counted as active
