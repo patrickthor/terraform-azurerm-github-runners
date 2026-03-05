@@ -482,19 +482,18 @@ def _scale_once(scale_hint: int = 0, workflow_job_id: str = "") -> dict[str, Any
 
     active_runners = [runner for runner in runners if _runner_state(runner) not in TERMINAL_RUNNER_STATES]
     current = len(active_runners)
-    queue_backlog = 0
 
     # For job-specific messages: only ever create 1 runner for this job.
-    # Using queue_backlog here causes the first message to bulk-create up to
-    # max_instances containers, all racing before the next message is processed.
-    # Subsequent messages then see current==max and are consumed without a runner.
-    # The timer handles top-up for min_instances and any missed backlog.
+    # Using queue_backlog here (even in the timer path) causes duplicate containers:
+    # the timer sees N queued messages and pre-creates N runners, then the SB trigger
+    # also processes each message and creates N more.  The SB trigger is solely
+    # responsible for job-driven scale-up; the timer only maintains min_instances.
     if workflow_job_id:
         desired = min(max_instances, current + scale_hint)
     else:
-        queue_backlog = _servicebus_active_message_count()
-        requested_parallel = max(scale_hint, queue_backlog)
-        desired = max(min_instances, min(max_instances, requested_parallel))
+        # Timer / non-job path: ensure min_instances floor only.
+        # Never read queue_backlog here — SB trigger handles those messages.
+        desired = max(min_instances, current)
 
     created = 0
     deleted = 0
@@ -526,7 +525,7 @@ def _scale_once(scale_hint: int = 0, workflow_job_id: str = "") -> dict[str, Any
         "created": created,
         "deleted": deleted,
         "pruned": pruned,
-        "queue_backlog": queue_backlog,
+        "queue_backlog": 0,  # no longer used for scaling; SB trigger handles job messages
         "workflow_job_id": workflow_job_id,
     }
 
