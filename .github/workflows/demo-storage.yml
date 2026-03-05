@@ -15,7 +15,6 @@ permissions:
 jobs:
   terraform:
     name: Terraform Demo
-    environment: production
     runs-on:
       - self-hosted
       - azure
