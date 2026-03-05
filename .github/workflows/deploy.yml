@@ -171,7 +171,17 @@ jobs:
 
       - name: Create deployment zip
         run: |
-          zip -r ../deploy.zip . -x "local.settings*.json" -x "__pycache__/*" -x "*.pyc"
+          # Pre-install dependencies so --no-build can be used at deploy time.
+          # This avoids the Kudu SCM validation that --build-remote true performs,
+          # which fails when the function app is mid-restart after a Terraform apply.
+          pip install \
+            --target .python_packages/lib/site-packages \
+            --upgrade \
+            -r requirements.txt
+          zip -r ../deploy.zip . \
+            -x "local.settings*.json" \
+            -x "__pycache__/*" \
+            -x "*.pyc"
 
       - name: Deploy zip to Function App
         run: |
@@ -183,5 +193,5 @@ jobs:
             --resource-group "${{ needs.infra.outputs.resource_group }}" \
             --name "${{ needs.infra.outputs.function_app_name }}" \
             --src ../deploy.zip \
-            --build-remote true \
+            --no-build \
             --timeout 300
