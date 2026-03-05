@@ -26,21 +26,12 @@ jobs:
         working-directory: demo
 
     env:
-      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID || vars.AZURE_CLIENT_ID || secrets.ARM_CLIENT_ID || vars.ARM_CLIENT_ID }}
       ARM_SUBSCRIPTION_ID: 61a5c972-6381-4d85-b1e0-032d5b3246b3
-      ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID || vars.AZURE_CLIENT_ID || secrets.ARM_CLIENT_ID || vars.ARM_CLIENT_ID }}
       ARM_USE_MSI: true
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Validate Managed Identity inputs
-        run: |
-          if [ -z "${AZURE_CLIENT_ID}" ]; then
-            echo "Missing user-assigned managed identity client id. Set AZURE_CLIENT_ID (or ARM_CLIENT_ID) as a secret or variable."
-            exit 1
-          fi
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
