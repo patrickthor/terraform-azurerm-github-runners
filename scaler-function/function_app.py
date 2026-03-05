@@ -482,16 +482,30 @@ def _scale_once(scale_hint: int = 0, workflow_job_id: str = "") -> dict[str, Any
 
     active_runners = [runner for runner in runners if _runner_state(runner) not in TERMINAL_RUNNER_STATES]
     current = len(active_runners)
+    queue_backlog = 0
 
-    queue_backlog = _servicebus_active_message_count()
-    # Use max, not sum: each queued message gets its own scale_worker invocation
-    # (maxConcurrentCalls=1 ensures serial execution). Adding them would cause
-    # a single invocation to over-provision for jobs that will be handled later.
-    requested_parallel = max(scale_hint, queue_backlog)
-    desired = max(min_instances, min(max_instances, requested_parallel))
+    # For job-specific messages: only ever create 1 runner for this job.
+    # Using queue_backlog here causes the first message to bulk-create up to
+    # max_instances containers, all racing before the next message is processed.
+    # Subsequent messages then see current==max and are consumed without a runner.
+    # The timer handles top-up for min_instances and any missed backlog.
+    if workflow_job_id:
+        desired = min(max_instances, current + scale_hint)
+    else:
+        queue_backlog = _servicebus_active_message_count()
+        requested_parallel = max(scale_hint, queue_backlog)
+        desired = max(min_instances, min(max_instances, requested_parallel))
 
     created = 0
     deleted = 0
+
+    if workflow_job_id and scale_hint > 0 and current >= max_instances:
+        # At capacity — do not consume this message. Re-raise so Service Bus
+        # retries it after the lock timeout (default 30s), by which time a
+        # slot may have freed up.
+        raise RuntimeError(
+            f"At max_instances ({max_instances}); deferring job {workflow_job_id} for retry"
+        )
 
     while current < desired:
         _create_runner(workflow_job_id=workflow_job_id if created == 0 else "")
