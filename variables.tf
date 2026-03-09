@@ -245,3 +245,9 @@ variable "runner_completed_ttl_minutes" {
     error_message = "Completed TTL must be between 1 and 60 minutes."
   }
 }
+
+variable "runner_workload_roles" {
+  description = "Azure built-in roles granted to the runner identity at subscription scope for workload resource creation"
+  type        = list(string)
+  default     = ["Contributor"]
+}

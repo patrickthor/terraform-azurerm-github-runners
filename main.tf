@@ -149,6 +149,13 @@ resource "azurerm_role_assignment" "runner_pull" {
   principal_id                     = azurerm_user_assigned_identity.runner_pull.principal_id
 }
 
+resource "azurerm_role_assignment" "runner_pull_workload" {
+  for_each             = toset(var.runner_workload_roles)
+  scope                = "/subscriptions/${data.azurerm_client_config.current.subscription_id}"
+  role_definition_name = each.value
+  principal_id         = azurerm_user_assigned_identity.runner_pull.principal_id
+}
+
 # ==============================================================================
 # Event-Driven Scaler Function App
 # ==============================================================================

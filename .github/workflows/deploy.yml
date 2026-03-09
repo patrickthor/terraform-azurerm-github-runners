@@ -98,10 +98,12 @@ jobs:
           STATE_ST:        ${{ vars.STATE_STORAGE_ACCOUNT_NAME }}
           FUNC_ST:         ${{ vars.FUNCTION_STORAGE_ACCOUNT_NAME }}
           FUNC_APP:        ${{ vars.FUNCTION_APP_NAME }}
-          SBNS:            ${{ vars.SERVICEBUS_NAMESPACE_NAME }}
-          GH_ORG:          ${{ vars.GH_ORG }}
-          GH_REPO:         ${{ vars.GH_REPO }}
+          SBNS:                  ${{ vars.SERVICEBUS_NAMESPACE_NAME }}
+          GH_ORG:                ${{ vars.GH_ORG }}
+          GH_REPO:               ${{ vars.GH_REPO }}
+          RUNNER_WORKLOAD_ROLES: ${{ vars.RUNNER_WORKLOAD_ROLES || 'Contributor' }}
         run: |
+          ROLES_TF=$(echo "$RUNNER_WORKLOAD_ROLES" | python3 -c "import sys,json; print(json.dumps([r.strip() for r in sys.stdin.read().strip().split(',')]))")
           cat > terraform.tfvars <<EOF
           resource_group_name           = "$RG"
           location                      = "$LOCATION"
@@ -115,6 +117,7 @@ jobs:
           servicebus_namespace_name     = "$SBNS"
           github_org                    = "$GH_ORG"
           github_repo                   = "$GH_REPO"
+          runner_workload_roles         = $ROLES_TF
           EOF
 
       - name: Terraform init

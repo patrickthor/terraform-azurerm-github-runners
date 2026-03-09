@@ -74,28 +74,6 @@ def _servicebus_send(payload: dict[str, Any]) -> None:
             sender.send_messages(ServiceBusMessage(json.dumps(payload)))
 
 
-def _servicebus_active_message_count() -> int:
-    rg = _env("RUNNER_RESOURCE_GROUP", required=True)
-    queue_name = _env("SERVICEBUS_QUEUE_NAME", required=True)
-    namespace_fqdn = _env("SERVICEBUS_NAMESPACE_FQDN", required=True)
-    namespace_name = namespace_fqdn.split(".", 1)[0].strip()
-    if not namespace_name:
-        return 0
-
-    path = (
-        f"/resourceGroups/{rg}/providers/Microsoft.ServiceBus/namespaces/{namespace_name}"
-        f"/queues/{queue_name}?api-version=2024-01-01"
-    )
-    try:
-        response = _arm_request("GET", path)
-        data = response.json()
-        details = (data.get("properties") or {}).get("countDetails") or {}
-        return int(details.get("activeMessageCount", 0) or 0)
-    except Exception as exc:
-        logging.warning("Unable to read Service Bus queue depth: %s", exc)
-        return 0
-
-
 def _arm_token() -> str:
     credential = DefaultAzureCredential()
     token = credential.get_token("https://management.azure.com/.default")
@@ -483,16 +461,12 @@ def _scale_once(scale_hint: int = 0, workflow_job_id: str = "") -> dict[str, Any
     active_runners = [runner for runner in runners if _runner_state(runner) not in TERMINAL_RUNNER_STATES]
     current = len(active_runners)
 
-    # For job-specific messages: only ever create 1 runner for this job.
-    # Using queue_backlog here (even in the timer path) causes duplicate containers:
-    # the timer sees N queued messages and pre-creates N runners, then the SB trigger
-    # also processes each message and creates N more.  The SB trigger is solely
-    # responsible for job-driven scale-up; the timer only maintains min_instances.
     if workflow_job_id:
+        # Job event: create exactly 1 runner for this job.
         desired = min(max_instances, current + scale_hint)
     else:
-        # Timer / non-job path: ensure min_instances floor only.
-        # Never read queue_backlog here — SB trigger handles those messages.
+        # Timer path: only maintain min_instances floor.
+        # The SB trigger is solely responsible for job-driven scale-up.
         desired = max(min_instances, current)
 
     created = 0
@@ -525,7 +499,6 @@ def _scale_once(scale_hint: int = 0, workflow_job_id: str = "") -> dict[str, Any
         "created": created,
         "deleted": deleted,
         "pruned": pruned,
-        "queue_backlog": 0,  # no longer used for scaling; SB trigger handles job messages
         "workflow_job_id": workflow_job_id,
     }
 
@@ -609,9 +582,8 @@ def cleanup_timer(timer: func.TimerRequest) -> None:
 
     result = _scale_once(scale_hint=0)
     logging.info(
-        "Timer cleanup result: pruned=%s desired=%s current=%s queue_backlog=%s",
+        "Timer cleanup result: pruned=%s desired=%s current=%s",
         result.get("pruned"),
         result.get("desired"),
         result.get("current"),
-        result.get("queue_backlog"),
     )
