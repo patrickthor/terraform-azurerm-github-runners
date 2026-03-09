@@ -81,7 +81,7 @@ resource "azurerm_key_vault" "kv" {
   rbac_authorization_enabled      = true
 
   network_acls {
-    default_action = "Allow"
+    default_action = "Deny"
     bypass         = "AzureServices"
   }
 
@@ -172,6 +172,11 @@ resource "azurerm_storage_account" "functions" {
   public_network_access_enabled   = var.enable_public_network_access
   allow_nested_items_to_be_public = false
 
+  network_rules {
+    default_action = "Deny"
+    bypass         = ["AzureServices", "Logging", "Metrics"]
+  }
+
   tags = var.tags
 }
 
@@ -214,6 +219,25 @@ resource "azurerm_linux_function_app" "scaler" {
 
     application_stack {
       python_version = var.function_runtime_version
+    }
+
+    ip_restriction_default_action = length(var.github_webhook_ip_ranges) > 0 ? "Deny" : "Allow"
+
+    dynamic "ip_restriction" {
+      for_each = var.github_webhook_ip_ranges
+      content {
+        name       = "github-webhook-${ip_restriction.key}"
+        ip_address = ip_restriction.value
+        action     = "Allow"
+        priority   = 100 + ip_restriction.key
+      }
+    }
+
+    ip_restriction {
+      name        = "azure-load-balancer"
+      service_tag = "AzureLoadBalancer"
+      action      = "Allow"
+      priority    = 200
     }
   }
 
