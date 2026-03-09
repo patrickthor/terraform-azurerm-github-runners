@@ -191,19 +191,22 @@ jobs:
 
           az functionapp config appsettings delete \
             --resource-group "$RG" --name "$APP" \
-            --setting-names WEBSITE_RUN_FROM_PACKAGE 2>/dev/null || true
+            --setting-names WEBSITE_RUN_FROM_PACKAGE ENABLE_ORYX_BUILD SCM_DO_BUILD_DURING_DEPLOYMENT 2>/dev/null || true
 
-          # Get Kudu publishing credentials (basic auth — separate from ARM tokens,
-          # works even when az functionapp deploy / config-zip CLI paths fail).
+          # Restart to ensure clean state after Terraform settings changes.
+          echo "Restarting function app..."
+          az functionapp restart --resource-group "$RG" --name "$APP"
+
+          # Get Kudu publishing credentials (basic auth — separate from ARM tokens).
           CREDS=$(az webapp deployment list-publishing-credentials \
             --resource-group "$RG" --name "$APP" \
             --query "{user: publishingUserName, pass: publishingPassword}" -o json)
           KUDU_USER=$(echo "$CREDS" | jq -r .user)
           KUDU_PASS=$(echo "$CREDS" | jq -r .pass)
 
-          # Wait until Kudu responds (up to 5 min).
-          echo "Waiting for Kudu SCM to be ready..."
-          for i in $(seq 1 30); do
+          # Wait until Kudu responds — Y1 Consumption cold-starts can take >5 min.
+          echo "Waiting for Kudu SCM to be ready (up to 10 min)..."
+          for i in $(seq 1 60); do
             HTTP=$(curl -s -o /dev/null -w "%{http_code}" \
               -u "$KUDU_USER:$KUDU_PASS" \
               "https://${APP}.scm.azurewebsites.net/api/deployments")
@@ -212,8 +215,8 @@ jobs:
               echo "Kudu is ready."
               break
             fi
-            if [[ $i -eq 30 ]]; then
-              echo "Kudu never became ready after 5 minutes." && exit 1
+            if [[ $i -eq 60 ]]; then
+              echo "Kudu never became ready after 10 minutes." && exit 1
             fi
             sleep 10
           done

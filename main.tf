@@ -17,8 +17,6 @@ locals {
   webhook_secret_secret_uri             = local.has_webhook_secret ? "${azurerm_key_vault.kv.vault_uri}secrets/${var.webhook_secret_secret_name}" : null
 
   scaler_base_settings = {
-    SCM_DO_BUILD_DURING_DEPLOYMENT = "true"
-    ENABLE_ORYX_BUILD              = "true"
     FUNCTIONS_WORKER_RUNTIME       = "python"
     SERVICEBUS_QUEUE_NAME        = var.servicebus_queue_name
     SERVICEBUS_NAMESPACE_FQDN    = "${azurerm_servicebus_namespace.scaler.name}.servicebus.windows.net"
