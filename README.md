@@ -106,20 +106,26 @@ az ad app federated-credential create --id $CLIENT_ID --parameters "{
   \"audiences\": [\"api://AzureADTokenExchange\"]
 }"
 
-# 4. Assign roles on the resource group
+# 4. Assign roles — all three at subscription scope
 PRINCIPAL_ID=$(az ad sp show --id $CLIENT_ID --query id -o tsv)
-SCOPE=/subscriptions/$SUBSCRIPTION_ID/resourceGroups/$RG
+SUB_SCOPE=/subscriptions/$SUBSCRIPTION_ID
 
 # Contributor — creates/modifies all module resources
 az role assignment create \
   --assignee-object-id $PRINCIPAL_ID --assignee-principal-type ServicePrincipal \
-  --role Contributor --scope $SCOPE
+  --role Contributor --scope $SUB_SCOPE
 
-# User Access Administrator — required to create the role assignments inside the module
-# (AcrPull, Contributor on RG, Managed Identity Operator, Key Vault Secrets User)
+# User Access Administrator — required to create intra-RG role assignments inside the module
+# (AcrPull, Managed Identity Operator, Key Vault Secrets User)
 az role assignment create \
   --assignee-object-id $PRINCIPAL_ID --assignee-principal-type ServicePrincipal \
-  --role "User Access Administrator" --scope $SCOPE
+  --role "User Access Administrator" --scope $SUB_SCOPE
+
+# Role Based Access Control Administrator — required to create the runner_pull workload role
+# assignment at subscription scope (runner_workload_roles variable)
+az role assignment create \
+  --assignee-object-id $PRINCIPAL_ID --assignee-principal-type ServicePrincipal \
+  --role "Role Based Access Control Administrator" --scope $SUB_SCOPE
 
 # 5. Print values to paste into GitHub secrets
 echo ""
@@ -163,6 +169,7 @@ In your repository go to **Settings → Secrets and variables → Actions**.
 | `SERVICEBUS_NAMESPACE_NAME` | `sbns-runner-poc-bvt` |
 | `GH_ORG` | `your-org` |
 | `GH_REPO` | `your-org/your-repo` |
+| `RUNNER_WORKLOAD_ROLES` | `Contributor` (comma-separated; roles granted to runners at subscription scope) |
 
 ---
 
