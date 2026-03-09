@@ -106,7 +106,7 @@ resource "azurerm_servicebus_namespace" "scaler" {
   name                = var.servicebus_namespace_name
   location            = var.location
   resource_group_name = var.resource_group_name
-  sku                 = "Standard"
+  sku                 = "Basic"
 
   tags = var.tags
 }
