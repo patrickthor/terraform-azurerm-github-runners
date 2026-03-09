@@ -188,31 +188,40 @@ jobs:
         run: |
           APP="${{ needs.infra.outputs.function_app_name }}"
           RG="${{ needs.infra.outputs.resource_group }}"
-          echo "Waiting for $APP SCM site to become available..."
-          for i in $(seq 1 30); do
+          echo "Waiting for $APP to reach Running state..."
+          for i in $(seq 1 24); do
             STATE=$(az functionapp show -g "$RG" -n "$APP" --query state -o tsv 2>/dev/null)
-            HTTP=$(curl -s -o /dev/null -w "%{http_code}" \
-              "https://${APP}.scm.azurewebsites.net/api/deployments" \
-              -H "Authorization: Bearer $(az account get-access-token --query accessToken -o tsv)" 2>/dev/null || echo "000")
-            echo "  attempt $i: app state=$STATE scm_http=$HTTP"
-            if [[ "$STATE" == "Running" && "$HTTP" == "200" ]]; then
-              echo "App is ready."
+            echo "  attempt $i: app state=$STATE"
+            if [[ "$STATE" == "Running" ]]; then
+              echo "App is Running. Waiting 30s for worker process to fully start..."
+              sleep 30
               exit 0
             fi
             sleep 10
           done
-          echo "Timed out waiting for app to become ready" && exit 1
+          echo "Timed out waiting for app to reach Running state" && exit 1
 
       - name: Deploy zip to Function App
         run: |
+          APP="${{ needs.infra.outputs.function_app_name }}"
+          RG="${{ needs.infra.outputs.resource_group }}"
           az functionapp config appsettings delete \
-            --resource-group "${{ needs.infra.outputs.resource_group }}" \
-            --name "${{ needs.infra.outputs.function_app_name }}" \
+            --resource-group "$RG" \
+            --name "$APP" \
             --setting-names WEBSITE_RUN_FROM_PACKAGE 2>/dev/null || true
-          az functionapp deploy \
-            --resource-group "${{ needs.infra.outputs.resource_group }}" \
-            --name "${{ needs.infra.outputs.function_app_name }}" \
-            --src-path ../deploy.zip \
-            --type zip \
-            --async true \
-            --timeout 300
+          for i in 1 2 3 4 5; do
+            echo "Deploy attempt $i..."
+            if az functionapp deploy \
+              --resource-group "$RG" \
+              --name "$APP" \
+              --src-path ../deploy.zip \
+              --type zip \
+              --async true \
+              --timeout 300; then
+              echo "Deploy succeeded."
+              exit 0
+            fi
+            echo "Deploy failed, waiting 30s before retry..."
+            sleep 30
+          done
+          echo "All deploy attempts failed" && exit 1
