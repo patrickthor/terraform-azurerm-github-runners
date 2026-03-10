@@ -251,7 +251,7 @@ variable "runner_workload_roles" {
   type        = list(string)
   default     = ["Contributor"]
 }
-ACR
+
 variable "github_webhook_ip_ranges" {
   description = "GitHub webhook CIDR ranges allowed to reach the Function App HTTP trigger. Defaults to GitHub's published hook IP ranges. Set to [] to disable IP restriction."
   type        = list(string)
