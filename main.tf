@@ -172,6 +172,11 @@ resource "azurerm_storage_account" "functions" {
   public_network_access_enabled   = var.enable_public_network_access
   allow_nested_items_to_be_public = false
 
+  network_rules {
+    default_action = "Allow"
+    bypass         = ["AzureServices", "Logging", "Metrics"]
+  }
+
   tags = var.tags
 }
 
