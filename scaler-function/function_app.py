@@ -8,6 +8,7 @@ import hmac
 import json
 import logging
 import os
+import time
 import uuid
 from typing import Any
 
@@ -93,11 +94,23 @@ def _arm_request(method: str, path: str, body: dict[str, Any] | None = None) -> 
         "Content-Type": "application/json",
     }
 
-    response = requests.request(method, url, headers=headers, json=body, timeout=30)
-    if response.status_code >= 400:
-        logging.error("ARM %s %s failed: %s", method, path, response.text)
-        response.raise_for_status()
-    return response
+    last_exc: Exception | None = None
+    for attempt in range(4):
+        try:
+            response = requests.request(method, url, headers=headers, json=body, timeout=30)
+            if response.status_code >= 400:
+                logging.error("ARM %s %s failed: %s", method, path, response.text)
+                response.raise_for_status()
+            return response
+        except (requests.ConnectionError, requests.Timeout) as exc:
+            last_exc = exc
+            wait = 2 ** attempt
+            logging.warning(
+                "ARM %s %s transient error (attempt %d/4), retrying in %ds: %s",
+                method, path, attempt + 1, wait, exc,
+            )
+            time.sleep(wait)
+    raise last_exc  # type: ignore[misc]
 
 
 def _list_runners() -> list[dict[str, Any]]:
