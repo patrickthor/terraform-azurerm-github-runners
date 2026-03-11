@@ -246,6 +246,36 @@ variable "runner_completed_ttl_minutes" {
   }
 }
 
+variable "runner_max_defer_count" {
+  description = "Maximum number of times a job message can be re-enqueued while waiting for a free runner slot. At the default 45 s / 60 s retry intervals this gives roughly 1 hour of retries before the message is dropped."
+  type        = number
+  default     = 80
+  validation {
+    condition     = var.runner_max_defer_count >= 1 && var.runner_max_defer_count <= 500
+    error_message = "Max defer count must be between 1 and 500."
+  }
+}
+
+variable "runner_capacity_retry_delay_seconds" {
+  description = "Seconds to wait before re-enqueuing a job message that was blocked by max_instances (at-capacity)."
+  type        = number
+  default     = 45
+  validation {
+    condition     = var.runner_capacity_retry_delay_seconds >= 5 && var.runner_capacity_retry_delay_seconds <= 3600
+    error_message = "Capacity retry delay must be between 5 and 3600 seconds."
+  }
+}
+
+variable "runner_quota_retry_delay_seconds" {
+  description = "Seconds to wait before re-enqueuing a job message that was blocked by an ACI StandardCores quota error."
+  type        = number
+  default     = 60
+  validation {
+    condition     = var.runner_quota_retry_delay_seconds >= 5 && var.runner_quota_retry_delay_seconds <= 3600
+    error_message = "Quota retry delay must be between 5 and 3600 seconds."
+  }
+}
+
 variable "runner_workload_roles" {
   description = "Azure built-in roles granted to the runner identity at subscription scope for workload resource creation"
   type        = list(string)

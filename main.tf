@@ -32,8 +32,11 @@ locals {
     RUNNER_MAX_INSTANCES     = tostring(var.runner_max_instances)
     RUNNER_IDLE_TIMEOUT_MIN  = tostring(var.runner_idle_timeout_minutes)
     MAX_RUNNER_RUNTIME_HOURS      = tostring(var.max_runner_runtime_hours)
-    RUNNER_COMPLETED_TTL_MINUTES  = tostring(var.runner_completed_ttl_minutes)
-    EVENT_POLL_INTERVAL_SEC       = tostring(var.event_poll_interval_seconds)
+    RUNNER_COMPLETED_TTL_MINUTES          = tostring(var.runner_completed_ttl_minutes)
+    RUNNER_MAX_DEFER_COUNT                = tostring(var.runner_max_defer_count)
+    RUNNER_CAPACITY_RETRY_DELAY_SECONDS   = tostring(var.runner_capacity_retry_delay_seconds)
+    RUNNER_QUOTA_RETRY_DELAY_SECONDS      = tostring(var.runner_quota_retry_delay_seconds)
+    EVENT_POLL_INTERVAL_SEC               = tostring(var.event_poll_interval_seconds)
     RUNNER_PULL_IDENTITY_ID        = azurerm_user_assigned_identity.runner_pull.id
     RUNNER_PULL_IDENTITY_CLIENT_ID = azurerm_user_assigned_identity.runner_pull.client_id
     AZURE_SUBSCRIPTION_ID          = data.azurerm_client_config.current.subscription_id
@@ -118,7 +121,7 @@ resource "azurerm_servicebus_queue" "scale_requests" {
   namespace_id = azurerm_servicebus_namespace.scaler.id
 
   max_delivery_count  = 30
-  lock_duration       = "PT2M"
+  lock_duration       = "PT5M"
   default_message_ttl = "P14D"
 }
 
