@@ -98,12 +98,17 @@ jobs:
           STATE_ST:        ${{ vars.STATE_STORAGE_ACCOUNT_NAME }}
           FUNC_ST:         ${{ vars.FUNCTION_STORAGE_ACCOUNT_NAME }}
           FUNC_APP:        ${{ vars.FUNCTION_APP_NAME }}
-          SBNS:                  ${{ vars.SERVICEBUS_NAMESPACE_NAME }}
-          GH_ORG:                ${{ vars.GH_ORG }}
-          GH_REPO:               ${{ vars.GH_REPO }}
-          RUNNER_WORKLOAD_ROLES: ${{ vars.RUNNER_WORKLOAD_ROLES || 'Contributor' }}
+          SBNS:            ${{ vars.SERVICEBUS_NAMESPACE_NAME }}
+          GH_ORG:          ${{ vars.GH_ORG }}
+          GH_REPO:         ${{ vars.GH_REPO }}
+          GH_APP_ID_SECRET:       ${{ vars.GITHUB_APP_ID_SECRET_NAME || 'github-app-id' }}
+          GH_APP_INST_SECRET:     ${{ vars.GITHUB_APP_INSTALLATION_ID_SECRET_NAME || 'github-app-installation-id' }}
+          GH_APP_KEY_SECRET:      ${{ vars.GITHUB_APP_PRIVATE_KEY_SECRET_NAME || 'github-app-private-key' }}
+          RUNNER_WORKLOAD_ROLES:  ${{ vars.RUNNER_WORKLOAD_ROLES || '' }}
+          CREATE_RG:              ${{ vars.CREATE_RESOURCE_GROUP || 'true' }}
+          ENABLE_LOCKS:           ${{ vars.ENABLE_RESOURCE_LOCKS || 'false' }}
         run: |
-          ROLES_TF=$(echo "$RUNNER_WORKLOAD_ROLES" | python3 -c "import sys,json; print(json.dumps([r.strip() for r in sys.stdin.read().strip().split(',')]))")
+          ROLES_TF=$(echo "$RUNNER_WORKLOAD_ROLES" | python3 -c "import sys,json; roles=[r.strip() for r in sys.stdin.read().strip().split(',') if r.strip()]; print(json.dumps(roles))")
           cat > terraform.tfvars <<EOF
           resource_group_name           = "$RG"
           location                      = "$LOCATION"
@@ -117,11 +122,19 @@ jobs:
           servicebus_namespace_name     = "$SBNS"
           github_org                    = "$GH_ORG"
           github_repo                   = "$GH_REPO"
+          github_app_id_secret_name              = "$GH_APP_ID_SECRET"
+          github_app_installation_id_secret_name = "$GH_APP_INST_SECRET"
+          github_app_private_key_secret_name     = "$GH_APP_KEY_SECRET"
           runner_workload_roles         = $ROLES_TF
+          create_resource_group         = $CREATE_RG
+          enable_resource_locks         = $ENABLE_LOCKS
           EOF
 
       - name: Terraform init
         run: terraform init -input=false -backend-config=backend.hcl
+
+      - name: Terraform validate
+        run: terraform validate
 
       - name: Terraform plan
         run: terraform plan -out=tfplan -input=false
@@ -146,6 +159,11 @@ jobs:
 
   # ----------------------------------------------------------------------------
   # Stage 3 — Function App code
+  #
+  # Flex Consumption (FC1) does NOT support Kudu zipdeploy. It requires
+  # "One Deploy" technology. We use `az functionapp deploy` which auto-detects
+  # FC1 and deploys via the correct blob-based mechanism.
+  # https://learn.microsoft.com/azure/azure-functions/functions-deployment-technologies
   # ----------------------------------------------------------------------------
   deploy:
     name: "Stage 3 — Function App code"
@@ -184,54 +202,26 @@ jobs:
             -x "__pycache__/*" \
             -x "*.pyc"
 
-      - name: Deploy zip to Function App
+      - name: Deploy to Function App (One Deploy)
         run: |
           APP="${{ needs.infra.outputs.function_app_name }}"
           RG="${{ needs.infra.outputs.resource_group }}"
 
+          # Clean up legacy settings that conflict with FC1 One Deploy.
           az functionapp config appsettings delete \
             --resource-group "$RG" --name "$APP" \
             --setting-names WEBSITE_RUN_FROM_PACKAGE ENABLE_ORYX_BUILD SCM_DO_BUILD_DURING_DEPLOYMENT 2>/dev/null || true
 
-          # Restart to ensure clean state after Terraform settings changes.
-          echo "Restarting function app..."
-          az functionapp restart --resource-group "$RG" --name "$APP"
+          # Deploy via One Deploy (the only deployment technology FC1 supports).
+          # az functionapp deploy auto-detects Flex Consumption and uses the
+          # correct blob-storage-based deployment path.
+          echo "Deploying zip via One Deploy..."
+          az functionapp deploy \
+            --resource-group "$RG" \
+            --name "$APP" \
+            --src-path ../deploy.zip \
+            --type zip \
+            --clean true \
+            --restart true
 
-          # Get Kudu publishing credentials (basic auth — separate from ARM tokens).
-          CREDS=$(az webapp deployment list-publishing-credentials \
-            --resource-group "$RG" --name "$APP" \
-            --query "{user: publishingUserName, pass: publishingPassword}" -o json)
-          KUDU_USER=$(echo "$CREDS" | jq -r .user)
-          KUDU_PASS=$(echo "$CREDS" | jq -r .pass)
-
-          # Wait until Kudu responds — Y1 Consumption cold-starts can take >5 min.
-          echo "Waiting for Kudu SCM to be ready (up to 10 min)..."
-          for i in $(seq 1 60); do
-            HTTP=$(curl -s -o /dev/null -w "%{http_code}" \
-              -u "$KUDU_USER:$KUDU_PASS" \
-              "https://${APP}.scm.azurewebsites.net/api/deployments")
-            echo "  attempt $i: kudu=$HTTP"
-            if [[ "$HTTP" == "200" ]]; then
-              echo "Kudu is ready."
-              break
-            fi
-            if [[ $i -eq 60 ]]; then
-              echo "Kudu never became ready after 10 minutes." && exit 1
-            fi
-            sleep 10
-          done
-
-          # Deploy via Kudu zipdeploy REST API.
-          echo "Uploading zip..."
-          HTTP=$(curl -s -o /tmp/deploy_out.txt -w "%{http_code}" \
-            -X POST \
-            -u "$KUDU_USER:$KUDU_PASS" \
-            -H "Content-Type: application/zip" \
-            --data-binary @../deploy.zip \
-            "https://${APP}.scm.azurewebsites.net/api/zipdeploy?isAsync=true")
-          echo "Kudu zipdeploy response: HTTP $HTTP"
-          cat /tmp/deploy_out.txt || true
-          if [[ "$HTTP" != "200" && "$HTTP" != "202" ]]; then
-            echo "Deployment failed." && exit 1
-          fi
-          echo "Deployment accepted."
+          echo "Deployment complete."

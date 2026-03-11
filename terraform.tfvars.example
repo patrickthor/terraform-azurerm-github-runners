@@ -1,22 +1,77 @@
 # Copy to terraform.tfvars (which is gitignored) and fill in your values.
+# Required variables have no defaults and must be set.
 
+# ==============================================================================
+# Core
+# ==============================================================================
 resource_group_name  = "rg-runner-poc-bvt"
 location             = "westeurope"
-subscription_id      = "00000000-0000-0000-0000-000000000000"  # az account show --query id -o tsv
-acr_name             = "crrunnerpocbvt"        # no hyphens — ACR allows alphanumeric only
-aci_name             = "ci-runner-poc-bvt"     # container instance prefix; also seeds asp/appi/id names
-key_vault_name       = "kv-runner-poc-bvt"
-storage_account_name = "strunnerpocbvt"        # state storage (managed by bootstrap)
+subscription_id      = "00000000-0000-0000-0000-000000000000" # az account show --query id -o tsv
 
+# ==============================================================================
+# Resource Names (must be globally unique where noted)
+# ==============================================================================
+acr_name                      = "crrunnerpocbvt"       # alphanumeric only
+key_vault_name                = "kv-runner-poc-bvt"
+storage_account_name          = "strunnerpocbvt"       # state storage (managed by bootstrap)
+function_app_name             = "func-runner-poc-bvt"
+function_storage_account_name = "stfnrunnerpocbvt"     # alphanumeric only
+servicebus_namespace_name     = "sbns-runner-poc-bvt"
+aci_name                      = "ci-runner-poc-bvt"    # ACI prefix; also seeds asp/appi/id names
+
+# ==============================================================================
+# GitHub
+# ==============================================================================
 github_org  = "your-github-org"
 github_repo = "your-github-org/your-repo"
 
-servicebus_namespace_name     = "sbns-runner-poc-bvt"
-function_app_name             = "func-runner-poc-bvt"
-function_storage_account_name = "stfnrunnerpocbvt"  # no hyphens — Storage allows alphanumeric only
+# Key Vault secret names for GitHub App authentication
+github_app_id_secret_name              = "github-app-id"
+github_app_installation_id_secret_name = "github-app-installation-id"
+github_app_private_key_secret_name     = "github-app-private-key"
+# webhook_secret_secret_name           = "github-webhook-secret"  # optional
 
-# Optional — override defaults as needed:
-# runner_completed_ttl_minutes = 5
-# max_runner_runtime_hours     = 2
-# runner_min_instances         = 0
-# runner_max_instances         = 10
+# ==============================================================================
+# Resource Group
+# ==============================================================================
+# create_resource_group = true  # set to false if RG already exists
+
+# ==============================================================================
+# Log Analytics
+# ==============================================================================
+# create_log_analytics_workspace = true
+# log_analytics_workspace_name   = "log-runner-poc-bvt"  # auto-derived if omitted
+# log_analytics_workspace_id     = null                   # set when using existing workspace
+# log_analytics_retention_days   = 30
+
+# ==============================================================================
+# Networking
+# ==============================================================================
+# subnet_id                    = null   # provide subnet ID for VNet integration
+# enable_public_network_access = true
+
+# ==============================================================================
+# Runner Configuration
+# ==============================================================================
+# cpu                          = 2
+# memory                       = 4
+# runner_min_instances          = 0     # set > 0 for always-ready warm runners
+# runner_max_instances          = 5
+# runner_idle_timeout_minutes   = 15
+# max_runner_runtime_hours      = 2
+# runner_completed_ttl_minutes  = 5
+
+# ==============================================================================
+# Security
+# ==============================================================================
+# runner_workload_roles = []            # explicitly grant what runners need
+# enable_resource_locks = false         # enable in production
+
+# ==============================================================================
+# Tags
+# ==============================================================================
+# tags = {
+#   Environment = "Test"
+#   ManagedBy   = "Terraform"
+#   Purpose     = "GitHubRunners"
+# }

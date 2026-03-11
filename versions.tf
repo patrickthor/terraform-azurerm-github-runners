@@ -1,5 +1,5 @@
 terraform {
-  required_version = ">= 1.3"
+  required_version = ">= 1.5"
 
   # Partial backend — supply the remaining values with:
   #   terraform init -backend-config=backend.hcl
@@ -9,8 +9,7 @@ terraform {
   required_providers {
     azurerm = {
       source  = "hashicorp/azurerm"
-      version = "~> 4.55"
+      version = "~> 4.63"
     }
-
   }
 }

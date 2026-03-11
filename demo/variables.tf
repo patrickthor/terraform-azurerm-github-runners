@@ -1,7 +1,6 @@
 variable "subscription_id" {
   description = "Azure subscription ID where resources will be deployed"
   type        = string
-  default     = "61a5c972-6381-4d85-b1e0-032d5b3246b3"
 }
 
 variable "resource_group_name" {

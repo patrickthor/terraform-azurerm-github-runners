@@ -1,5 +1,9 @@
+# ==============================================================================
+# Required Variables — globally unique names must be provided by the caller
+# ==============================================================================
+
 variable "resource_group_name" {
-  description = "Name of the Azure resource group"
+  description = "Name of the Azure resource group (created by module when create_resource_group = true, otherwise must exist)"
   type        = string
 }
 
@@ -18,7 +22,7 @@ variable "subscription_id" {
 }
 
 variable "acr_name" {
-  description = "Name of the Azure Container Registry (must be globally unique)"
+  description = "Name of the Azure Container Registry (must be globally unique, alphanumeric only)"
   type        = string
   validation {
     condition     = can(regex("^[a-zA-Z0-9]{5,50}$", var.acr_name))
@@ -27,7 +31,7 @@ variable "acr_name" {
 }
 
 variable "aci_name" {
-  description = "Base name for dynamically created Azure Container Instance runners (follows ci-{workload}-{env}-{instance} convention). Also used to derive the managed identity, App Service plan, and Application Insights names."
+  description = "Base name prefix for dynamically created ACI runner instances (e.g. ci-runner-poc-bvt)"
   type        = string
 }
 
@@ -41,11 +45,34 @@ variable "key_vault_name" {
 }
 
 variable "storage_account_name" {
-  description = "Name of the Azure Storage Account (must be globally unique)"
+  description = "Name of the Terraform-state storage account (managed by bootstrap, referenced as data source)"
   type        = string
   validation {
     condition     = can(regex("^[a-z0-9]{3,24}$", var.storage_account_name))
     error_message = "Storage account name must be 3-24 lowercase alphanumeric characters."
+  }
+}
+
+variable "function_app_name" {
+  description = "Name of the scaler Function App (must be globally unique, max 32 chars recommended)"
+  type        = string
+}
+
+variable "function_storage_account_name" {
+  description = "Storage account name for Azure Functions runtime (must be globally unique)"
+  type        = string
+  validation {
+    condition     = can(regex("^[a-z0-9]{3,24}$", var.function_storage_account_name))
+    error_message = "Function storage account name must be 3-24 lowercase alphanumeric characters."
+  }
+}
+
+variable "servicebus_namespace_name" {
+  description = "Name of Service Bus namespace for runner scale events (must be globally unique)"
+  type        = string
+  validation {
+    condition     = can(regex("^[a-z0-9-]{6,50}$", var.servicebus_namespace_name))
+    error_message = "Service Bus namespace name must be 6-50 characters of lowercase letters, numbers, and hyphens."
   }
 }
 
@@ -59,14 +86,70 @@ variable "github_repo" {
   type        = string
 }
 
-variable "github_environment" {
-  description = "GitHub environment name"
-  type        = string
-  default     = "production"
+# ==============================================================================
+# Resource Group
+# ==============================================================================
+
+variable "create_resource_group" {
+  description = "Whether the module should create the resource group. Set to false if it already exists."
+  type        = bool
+  default     = true
 }
 
+# ==============================================================================
+# Log Analytics & Observability
+# ==============================================================================
+
+variable "create_log_analytics_workspace" {
+  description = "Whether to create a new Log Analytics workspace. Set to false and provide log_analytics_workspace_id to use an existing one."
+  type        = bool
+  default     = true
+}
+
+variable "log_analytics_workspace_id" {
+  description = "ID of an existing Log Analytics workspace. Required when create_log_analytics_workspace = false."
+  type        = string
+  default     = null
+}
+
+variable "log_analytics_workspace_name" {
+  description = "Name for the Log Analytics workspace (only used when create_log_analytics_workspace = true)"
+  type        = string
+  default     = null
+}
+
+variable "log_analytics_retention_days" {
+  description = "Retention period in days for Log Analytics workspace"
+  type        = number
+  default     = 30
+  validation {
+    condition     = var.log_analytics_retention_days >= 30 && var.log_analytics_retention_days <= 730
+    error_message = "Retention must be between 30 and 730 days."
+  }
+}
+
+# ==============================================================================
+# Networking
+# ==============================================================================
+
+variable "subnet_id" {
+  description = "Optional subnet ID for VNet integration of the Function App. Leave null for public access."
+  type        = string
+  default     = null
+}
+
+variable "enable_public_network_access" {
+  description = "Enable public network access for resources (set to false when using private endpoints/VNet)"
+  type        = bool
+  default     = true
+}
+
+# ==============================================================================
+# Runner Configuration
+# ==============================================================================
+
 variable "cpu" {
-  description = "Default CPU cores for dynamically spawned runner instances"
+  description = "CPU cores for dynamically spawned runner instances"
   type        = number
   default     = 2
   validation {
@@ -76,7 +159,7 @@ variable "cpu" {
 }
 
 variable "memory" {
-  description = "Default memory (GB) for dynamically spawned runner instances"
+  description = "Memory (GB) for dynamically spawned runner instances"
   type        = number
   default     = 4
   validation {
@@ -86,7 +169,7 @@ variable "memory" {
 }
 
 variable "runner_min_instances" {
-  description = "Minimum number of runner instances to keep available"
+  description = "Minimum number of runner instances to keep available (set > 0 for always-ready warm runners)"
   type        = number
   default     = 0
   validation {
@@ -106,7 +189,7 @@ variable "runner_max_instances" {
 }
 
 variable "runner_idle_timeout_minutes" {
-  description = "Idle timeout in minutes before scaler should terminate unused runners"
+  description = "Idle timeout in minutes before scaler terminates unused runners"
   type        = number
   default     = 15
   validation {
@@ -121,24 +204,101 @@ variable "runner_labels" {
   default     = "azure,container-instance,self-hosted"
 }
 
-variable "tags" {
-  description = "Common tags to apply to all resources"
-  type        = map(string)
-  default = {
-    Environment = "Production"
-    ManagedBy   = "Terraform"
-    Purpose     = "GitHubRunners"
+variable "max_runner_runtime_hours" {
+  description = "Maximum hours a runner can run before scaler marks it stale"
+  type        = number
+  default     = 2
+  validation {
+    condition     = var.max_runner_runtime_hours >= 1 && var.max_runner_runtime_hours <= 24
+    error_message = "Max runtime must be between 1 and 24 hours."
   }
 }
 
-variable "enable_public_network_access" {
-  description = "Enable public network access for resources (set to false for private endpoints)"
+variable "runner_completed_ttl_minutes" {
+  description = "Minutes to keep a terminated runner container before deleting it"
+  type        = number
+  default     = 5
+  validation {
+    condition     = var.runner_completed_ttl_minutes >= 1 && var.runner_completed_ttl_minutes <= 60
+    error_message = "Completed TTL must be between 1 and 60 minutes."
+  }
+}
+
+variable "event_poll_interval_seconds" {
+  description = "Polling cadence for scaler worker when processing queue messages"
+  type        = number
+  default     = 5
+  validation {
+    condition     = var.event_poll_interval_seconds >= 1 && var.event_poll_interval_seconds <= 60
+    error_message = "The event_poll_interval_seconds must be between 1 and 60."
+  }
+}
+
+# ==============================================================================
+# RBAC & Security
+# ==============================================================================
+
+variable "runner_workload_roles" {
+  description = "Azure built-in roles granted to the runner identity at subscription scope. Default is empty — explicitly choose what runners need."
+  type        = list(string)
+  default     = []
+}
+
+variable "enable_resource_locks" {
+  description = "Enable CanNotDelete locks on Key Vault and state storage. Disable in dev/test environments."
   type        = bool
-  default     = true
+  default     = false
+}
+
+# ==============================================================================
+# GitHub App Secrets (Key Vault secret names)
+# ==============================================================================
+
+variable "github_app_id_secret_name" {
+  description = "Key Vault secret name containing GitHub App ID"
+  type        = string
+}
+
+variable "github_app_installation_id_secret_name" {
+  description = "Key Vault secret name containing GitHub App installation ID"
+  type        = string
+}
+
+variable "github_app_private_key_secret_name" {
+  description = "Key Vault secret name containing GitHub App private key PEM"
+  type        = string
+}
+
+variable "webhook_secret_secret_name" {
+  description = "Optional Key Vault secret name containing webhook secret for GitHub signature validation"
+  type        = string
+  default     = null
+}
+
+# ==============================================================================
+# Service Configuration
+# ==============================================================================
+
+variable "github_environment" {
+  description = "GitHub environment name"
+  type        = string
+  default     = "production"
+}
+
+variable "servicebus_queue_name" {
+  description = "Queue name used to buffer scale requests"
+  type        = string
+  default     = "runner-scale-requests"
+}
+
+variable "function_runtime_version" {
+  description = "Python runtime version for the scaler Function App"
+  type        = string
+  default     = "3.11"
 }
 
 variable "acr_sku" {
-  description = "SKU for Azure Container Registry"
+  description = "SKU for Azure Container Registry (Premium required for private endpoints)"
   type        = string
   default     = "Basic"
   validation {
@@ -157,133 +317,8 @@ variable "storage_account_replication_type" {
   }
 }
 
-variable "github_app_id_secret_name" {
-  description = "Key Vault secret name containing GitHub App ID."
-  type        = string
-  default     = "runnerpocbouvet-github-app-id"
-}
-
-variable "github_app_installation_id_secret_name" {
-  description = "Key Vault secret name containing GitHub App installation ID."
-  type        = string
-  default     = "runnerpocbouvet-github-app-installation-id"
-}
-
-variable "github_app_private_key_secret_name" {
-  description = "Key Vault secret name containing GitHub App private key PEM."
-  type        = string
-  default     = "runnerpocbouvet-github-app-private-key"
-}
-
-variable "webhook_secret_secret_name" {
-  description = "Optional Key Vault secret name containing webhook secret for GitHub signature validation."
-  type        = string
-  default     = null
-}
-
-variable "servicebus_namespace_name" {
-  description = "Name of Service Bus namespace for runner scale events (must be globally unique)"
-  type        = string
-  validation {
-    condition     = can(regex("^[a-z0-9-]{6,50}$", var.servicebus_namespace_name))
-    error_message = "Service Bus namespace name must be 6-50 characters of lowercase letters, numbers, and hyphens."
-  }
-}
-
-variable "servicebus_queue_name" {
-  description = "Queue name used to buffer scale requests"
-  type        = string
-  default     = "runner-scale-requests"
-}
-
-variable "function_app_name" {
-  description = "Name of Function App that ingests events and scales runners (must be globally unique)"
-  type        = string
-}
-
-variable "function_storage_account_name" {
-  description = "Storage account name for Azure Functions runtime (must be globally unique)"
-  type        = string
-  validation {
-    condition     = can(regex("^[a-z0-9]{3,24}$", var.function_storage_account_name))
-    error_message = "Function storage account name must be 3-24 lowercase alphanumeric characters."
-  }
-}
-
-variable "function_runtime_version" {
-  description = "Python runtime version for the scaler Function App"
-  type        = string
-  default     = "3.11"
-}
-
-variable "event_poll_interval_seconds" {
-  description = "Polling cadence used by scaler worker when processing queue messages"
-  type        = number
-  default     = 5
-  validation {
-    condition     = var.event_poll_interval_seconds >= 1 && var.event_poll_interval_seconds <= 60
-    error_message = "The event_poll_interval_seconds must be between 1 and 60."
-  }
-}
-
-variable "max_runner_runtime_hours" {
-  description = "Maximum hours a dynamically spawned runner can run before scaler marks it stale"
-  type        = number
-  default     = 2
-  validation {
-    condition     = var.max_runner_runtime_hours >= 1 && var.max_runner_runtime_hours <= 24
-    error_message = "Max runtime must be between 1 and 24 hours."
-  }
-}
-
-variable "runner_completed_ttl_minutes" {
-  description = "Minutes to keep a terminated/succeeded runner container before deleting it"
-  type        = number
-  default     = 5
-  validation {
-    condition     = var.runner_completed_ttl_minutes >= 1 && var.runner_completed_ttl_minutes <= 60
-    error_message = "Completed TTL must be between 1 and 60 minutes."
-  }
-}
-
-variable "runner_max_defer_count" {
-  description = "Maximum number of times a job message can be re-enqueued while waiting for a free runner slot. At the default 45 s / 60 s retry intervals this gives roughly 1 hour of retries before the message is dropped."
-  type        = number
-  default     = 80
-  validation {
-    condition     = var.runner_max_defer_count >= 1 && var.runner_max_defer_count <= 500
-    error_message = "Max defer count must be between 1 and 500."
-  }
-}
-
-variable "runner_capacity_retry_delay_seconds" {
-  description = "Seconds to wait before re-enqueuing a job message that was blocked by max_instances (at-capacity)."
-  type        = number
-  default     = 45
-  validation {
-    condition     = var.runner_capacity_retry_delay_seconds >= 5 && var.runner_capacity_retry_delay_seconds <= 3600
-    error_message = "Capacity retry delay must be between 5 and 3600 seconds."
-  }
-}
-
-variable "runner_quota_retry_delay_seconds" {
-  description = "Seconds to wait before re-enqueuing a job message that was blocked by an ACI StandardCores quota error."
-  type        = number
-  default     = 60
-  validation {
-    condition     = var.runner_quota_retry_delay_seconds >= 5 && var.runner_quota_retry_delay_seconds <= 3600
-    error_message = "Quota retry delay must be between 5 and 3600 seconds."
-  }
-}
-
-variable "runner_workload_roles" {
-  description = "Azure built-in roles granted to the runner identity at subscription scope for workload resource creation"
-  type        = list(string)
-  default     = ["Contributor"]
-}
-
 variable "github_webhook_ip_ranges" {
-  description = "GitHub webhook CIDR ranges allowed to reach the Function App HTTP trigger. Defaults to GitHub's published hook IP ranges. Set to [] to disable IP restriction."
+  description = "GitHub webhook CIDR ranges allowed to reach the Function App. Set to [] to disable IP restriction."
   type        = list(string)
   default = [
     "192.30.252.0/22",
@@ -291,4 +326,13 @@ variable "github_webhook_ip_ranges" {
     "140.82.112.0/20",
     "143.55.64.0/20",
   ]
+}
+
+variable "tags" {
+  description = "Common tags to apply to all resources"
+  type        = map(string)
+  default = {
+    ManagedBy = "Terraform"
+    Purpose   = "GitHubRunners"
+  }
 }

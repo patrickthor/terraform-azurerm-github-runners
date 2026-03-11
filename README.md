@@ -34,8 +34,9 @@ Azure Function App (cleanup_timer)  [runs every 5 min]
 | Service Bus namespace | `sbns-{workload}-{env}-{instance}` | `sbns-runner-poc-bvt` | Scale request queue |
 | Function App | `func-{workload}-{env}-{instance}` | `func-runner-poc-bvt` | Control plane |
 | Function storage | `stfn{workload}{env}{instance}` | `stfnrunnerpocbvt` | Functions runtime storage |
-| App Service plan | `asp-{workload}-{env}-{instance}` | `asp-runner-poc-bvt` | Consumption Y1 (Linux) |
+| App Service plan | `asp-{workload}-{env}-{instance}` | `asp-runner-poc-bvt` | Flex Consumption FC1 (Linux) |
 | Application Insights | `appi-{workload}-{env}-{instance}` | `appi-runner-poc-bvt` | Telemetry |
+| Log Analytics | `log-{workload}-{env}-{instance}` | `log-runner-poc-bvt` | Diagnostics & log retention |
 | Managed identity | `id-{workload}-{env}-{instance}` | `id-runner-poc-bvt` | ACI → ACR pull |
 | State storage | `st{workload}{env}{instance}` (bootstrap) | `strunnerpocbvt` | Terraform remote state |
 | GitHub App | `ghapp-{workload}-{env}-{instance}` | `ghapp-runner-poc-bvt` | Issues runner tokens |
@@ -169,7 +170,9 @@ In your repository go to **Settings → Secrets and variables → Actions**.
 | `SERVICEBUS_NAMESPACE_NAME` | `sbns-runner-poc-bvt` |
 | `GH_ORG` | `your-org` |
 | `GH_REPO` | `your-org/your-repo` |
-| `RUNNER_WORKLOAD_ROLES` | `Contributor` (comma-separated; roles granted to runners at subscription scope) |
+| `RUNNER_WORKLOAD_ROLES` | *(empty — explicitly grant what runners need, comma-separated)* |
+| `CREATE_RESOURCE_GROUP` | `true` *(set to `false` if RG already exists)* |
+| `ENABLE_RESOURCE_LOCKS` | `false` *(set to `true` in production)* |
 
 ---
 
@@ -196,8 +199,8 @@ If the storage account already exists from a previous run, check *skip_create* �
 
 Push any commit to `main` — the **Deploy** workflow runs automatically:
 
-- **Stage 2 — Infrastructure**: generates `backend.hcl` and `terraform.tfvars` from your GitHub variables, runs `terraform init`, `plan`, and `apply`.
-- **Stage 3 — Function App code**: publishes `scaler-function/` via `func azure functionapp publish --python --build remote`.
+- **Stage 2 — Infrastructure**: generates `backend.hcl` and `terraform.tfvars` from your GitHub variables, runs `terraform init`, `validate`, `plan`, and `apply`.
+- **Stage 3 — Function App code**: packages `scaler-function/` as a zip and deploys via `az functionapp deploy` (One Deploy — the only deployment technology supported by Flex Consumption FC1).
 
 ---
 
@@ -229,12 +232,14 @@ az keyvault secret set --vault-name $KV \
 
 Default secret names expected by this module:
 
-| Variable | Default secret name |
+| Variable | Example value |
 |---|---|
-| `github_app_id_secret_name` | `runnerpocbouvet-github-app-id` |
-| `github_app_installation_id_secret_name` | `runnerpocbouvet-github-app-installation-id` |
-| `github_app_private_key_secret_name` | `runnerpocbouvet-github-app-private-key` |
+| `github_app_id_secret_name` | `github-app-id` |
+| `github_app_installation_id_secret_name` | `github-app-installation-id` |
+| `github_app_private_key_secret_name` | `github-app-private-key` |
 | `webhook_secret_secret_name` | *(optional, set to `null` to disable)* |
+
+These are required variables with no defaults — you must explicitly set them in your `terraform.tfvars`.
 
 The Function App is granted `Key Vault Secrets User` automatically by this module.
 
@@ -309,19 +314,27 @@ git push
 
 | Variable | Default | Description |
 |---|---|---|
+| `create_resource_group` | `true` | Whether the module creates the resource group |
+| `create_log_analytics_workspace` | `true` | Create a new Log Analytics workspace (set false + provide ID to use existing) |
+| `log_analytics_workspace_id` | `null` | Existing Log Analytics workspace ID |
+| `log_analytics_workspace_name` | `null` | Name for created workspace (auto-derived if omitted) |
+| `log_analytics_retention_days` | `30` | Log Analytics retention (30–730 days) |
+| `subnet_id` | `null` | Subnet ID for VNet integration |
+| `enable_public_network_access` | `true` | Set to `false` for private endpoint environments |
 | `webhook_secret_secret_name` | `null` | Key Vault secret name for webhook HMAC validation |
 | `runner_min_instances` | `0` | Minimum live runners |
-| `runner_max_instances` | `10` | Maximum live runners |
+| `runner_max_instances` | `5` | Maximum live runners |
 | `runner_idle_timeout_minutes` | `15` | Minutes before idle runner is terminated |
 | `runner_completed_ttl_minutes` | `5` | Minutes to retain a completed runner before deletion |
 | `max_runner_runtime_hours` | `2` | Hard cap on runner lifetime |
 | `cpu` | `2` | CPU cores per runner |
 | `memory` | `4` | Memory (GB) per runner |
 | `runner_labels` | `azure,container-instance,self-hosted` | Comma-separated runner labels |
-| `acr_sku` | `Standard` | Container Registry SKU |
+| `runner_workload_roles` | `[]` | Azure roles granted to runner identity at subscription scope |
+| `enable_resource_locks` | `false` | CanNotDelete locks on Key Vault and state storage |
+| `acr_sku` | `Basic` | Container Registry SKU |
 | `storage_account_replication_type` | `LRS` | State storage replication |
-| `enable_public_network_access` | `true` | Set to `false` for private endpoint environments |
-| `tags` | `{Environment, ManagedBy, Purpose}` | Common resource tags |
+| `tags` | `{ManagedBy, Purpose}` | Common resource tags |
 
 ---
 
@@ -329,6 +342,7 @@ git push
 
 | Output | Description |
 |---|---|
+| `resource_group_name` | Resource group name |
 | `function_app_name` | Function App name |
 | `function_app_default_hostname` | Function App hostname (use for webhook URL) |
 | `acr_login_server` | ACR login server URL |
@@ -338,7 +352,10 @@ git push
 | `servicebus_namespace_name` | Service Bus namespace name |
 | `servicebus_queue_name` | Service Bus queue name |
 | `storage_account_id` | State storage account ID |
-| `function_storage_account_id` | Function App storage account ID |
+| `runner_pull_identity` | User-assigned identity (id, client_id, principal_id) for ACR pull |
+| `scaler_identity_principal_id` | System-assigned principal ID for scaler Function App |
+| `log_analytics_workspace_id` | Log Analytics workspace ID used for diagnostics |
+| `application_insights_connection_string` | Application Insights connection string (sensitive) |
 
 ---
 
@@ -361,9 +378,11 @@ The control plane (`scaler-function/function_app.py`) has three functions:
 |---|---|---|
 | `github_webhook` | HTTP | Validates signature, filters to `self-hosted` jobs, enqueues scale request |
 | `scale_worker` | Service Bus | Deduplicates runners per job, computes desired count, creates/deletes ACI |
-| `cleanup_timer` | Timer (5 min) | Removes completed, stale, or over-TTL runners |
+| `cleanup_timer` | Timer (1 min) | Removes completed, stale, or over-TTL runners |
 
 Key behaviours:
 - `maxConcurrentCalls: 1` on the Service Bus trigger prevents duplicate scale operations
-- Scale formula: `max(scale_hint, queue_backlog)` — never sums, avoids over-provisioning
+- At-capacity deferral: raises `RuntimeError` so Service Bus retries after lock timeout (2 min)
 - Non-terminal runner deduplication — terminated containers are not counted as active
+- HTTP session pooling for ARM and GitHub API calls
+- Identity-based storage connection (no access keys)
