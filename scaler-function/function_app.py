@@ -77,17 +77,29 @@ def _servicebus_send(payload: dict[str, Any], delay_seconds: int = 0) -> None:
 
     fqdn = _env("SERVICEBUS_NAMESPACE_FQDN", required=True)
     queue_name = _env("SERVICEBUS_QUEUE_NAME", required=True)
+    payload_json = json.dumps(payload)
 
-    msg = ServiceBusMessage(json.dumps(payload))
-    if delay_seconds > 0:
-        msg.scheduled_enqueue_time_utc = (
-            dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=delay_seconds)
-        )
-
-    with ServiceBusClient(fully_qualified_namespace=fqdn, credential=DefaultAzureCredential()) as client:
-        sender = client.get_queue_sender(queue_name=queue_name)
-        with sender:
-            sender.send_messages(msg)
+    last_exc: Exception | None = None
+    for attempt in range(4):
+        try:
+            msg = ServiceBusMessage(payload_json)
+            if delay_seconds > 0:
+                msg.scheduled_enqueue_time_utc = (
+                    dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=delay_seconds)
+                )
+            with ServiceBusClient(fully_qualified_namespace=fqdn, credential=DefaultAzureCredential()) as client:
+                with client.get_queue_sender(queue_name=queue_name) as sender:
+                    sender.send_messages(msg)
+            return
+        except Exception as exc:
+            last_exc = exc
+            wait = 2 ** attempt
+            logging.warning(
+                "ServiceBus send transient error (attempt %d/4), retrying in %ds: %s",
+                attempt + 1, wait, exc,
+            )
+            time.sleep(wait)
+    raise last_exc  # type: ignore[misc]
 
 
 def _arm_token() -> str:
@@ -514,19 +526,7 @@ def _scale_once(scale_hint: int = 0, workflow_job_id: str = "") -> dict[str, Any
         )
 
     while current < desired:
-        for quota_attempt in range(3):
-            try:
-                _create_runner(workflow_job_id=workflow_job_id if created == 0 else "")
-                break
-            except _QuotaExceededError:
-                if quota_attempt >= 2:
-                    raise
-                wait = 35
-                logging.warning(
-                    "ACI quota exhausted for job %s; sleeping %ds then retrying (%d/2)",
-                    workflow_job_id, wait, quota_attempt + 1,
-                )
-                time.sleep(wait)
+        _create_runner(workflow_job_id=workflow_job_id if created == 0 else "")
         current += 1
         created += 1
 
@@ -625,6 +625,23 @@ def scale_worker(message: func.ServiceBusMessage) -> None:
             _servicebus_send(event, delay_seconds=delay)
             logging.warning(
                 "At capacity for job %s (defer %d/%d); re-enqueued with %ds delay: %s",
+                workflow_job_id, defer_count, max_defer, delay, exc,
+            )
+            # return normally — SB *completes* this message, delivery count not incremented
+        except _QuotaExceededError as exc:
+            defer_count = int(event.get("_defer_count") or 0) + 1
+            max_defer = _int_env("RUNNER_MAX_DEFER_COUNT", 20)
+            if defer_count > max_defer:
+                logging.error(
+                    "Job %s deferred %d times during quota exhaustion; giving up",
+                    workflow_job_id, defer_count,
+                )
+                return  # complete the message; job will time out on GitHub side
+            delay = _int_env("RUNNER_QUOTA_RETRY_DELAY_SECONDS", 60)
+            event["_defer_count"] = defer_count
+            _servicebus_send(event, delay_seconds=delay)
+            logging.warning(
+                "ACI quota exhausted for job %s (defer %d/%d); re-enqueued with %ds delay: %s",
                 workflow_job_id, defer_count, max_defer, delay, exc,
             )
             # return normally — SB *completes* this message, delivery count not incremented
