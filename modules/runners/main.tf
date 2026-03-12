@@ -279,9 +279,13 @@ resource "azurerm_function_app_flex_consumption" "scaler" {
   service_plan_id = azurerm_service_plan.functions.id
 
   # Flex Consumption storage config (deployment artifacts)
+  # NOTE: SystemAssignedIdentity causes "Failed to fetch host key" during deployment.
+  # Using StorageAccountConnectionString until Azure fully supports MSI for FC1 deployments.
+  # See: https://github.com/hashicorp/terraform-provider-azurerm/issues/29993
   storage_container_type      = "blobContainer"
   storage_container_endpoint  = "${azurerm_storage_account.functions.primary_blob_endpoint}${azurerm_storage_container.function_deploy.name}"
-  storage_authentication_type = "SystemAssignedIdentity"
+  storage_authentication_type = "StorageAccountConnectionString"
+  storage_access_key          = azurerm_storage_account.functions.primary_access_key
 
   runtime_name    = "python"
   runtime_version = var.function_runtime_version
@@ -312,10 +316,6 @@ resource "azurerm_function_app_flex_consumption" "scaler" {
 
   app_settings = merge(
     local.scaler_base_settings,
-    # Identity-based storage connection (no access key)
-    {
-      AzureWebJobsStorage__accountName = azurerm_storage_account.functions.name
-    },
     local.has_complete_app_auth ? {
       GITHUB_APP_ID              = "@Microsoft.KeyVault(SecretUri=${local.github_app_id_secret_uri})"
       GITHUB_APP_INSTALLATION_ID = "@Microsoft.KeyVault(SecretUri=${local.github_app_installation_id_secret_uri})"
