@@ -266,15 +266,26 @@ resource "azurerm_application_insights" "scaler" {
   depends_on = [azurerm_resource_group.this]
 }
 
-resource "azurerm_linux_function_app" "scaler" {
-  name                        = local.function_app_name
-  location                    = var.location
-  resource_group_name         = local.resource_group_name
-  functions_extension_version = "~4"
+resource "azurerm_storage_container" "function_deploy" {
+  name                  = "function-deployments"
+  storage_account_id    = azurerm_storage_account.functions.id
+  container_access_type = "private"
+}
 
-  service_plan_id        = azurerm_service_plan.functions.id
-  storage_account_name   = azurerm_storage_account.functions.name
-  storage_uses_managed_identity = true
+resource "azurerm_function_app_flex_consumption" "scaler" {
+  name                = local.function_app_name
+  location            = var.location
+  resource_group_name = local.resource_group_name
+
+  service_plan_id = azurerm_service_plan.functions.id
+
+  # Flex Consumption storage config (deployment artifacts)
+  storage_container_type      = "blobContainer"
+  storage_container_endpoint  = "${azurerm_storage_account.functions.primary_blob_endpoint}${azurerm_storage_container.function_deploy.name}"
+  storage_authentication_type = "SystemAssignedIdentity"
+
+  runtime_name    = "python"
+  runtime_version = var.function_runtime_version
 
   # VNet integration (optional)
   virtual_network_subnet_id = var.subnet_id
@@ -286,10 +297,6 @@ resource "azurerm_linux_function_app" "scaler" {
   site_config {
     # Connection string only — instrumentation key is deprecated since March 2025
     application_insights_connection_string = azurerm_application_insights.scaler.connection_string
-
-    application_stack {
-      python_version = var.function_runtime_version
-    }
 
     ip_restriction_default_action = length(var.github_webhook_ip_ranges) > 0 ? "Deny" : "Allow"
 
@@ -353,47 +360,47 @@ resource "azurerm_linux_function_app" "scaler" {
 resource "azurerm_role_assignment" "func_storage_blob" {
   scope                = azurerm_storage_account.functions.id
   role_definition_name = "Storage Blob Data Contributor"
-  principal_id         = azurerm_linux_function_app.scaler.identity[0].principal_id
+  principal_id         = azurerm_function_app_flex_consumption.scaler.identity[0].principal_id
 }
 
 resource "azurerm_role_assignment" "func_storage_queue" {
   scope                = azurerm_storage_account.functions.id
   role_definition_name = "Storage Queue Data Contributor"
-  principal_id         = azurerm_linux_function_app.scaler.identity[0].principal_id
+  principal_id         = azurerm_function_app_flex_consumption.scaler.identity[0].principal_id
 }
 
 resource "azurerm_role_assignment" "func_storage_table" {
   scope                = azurerm_storage_account.functions.id
   role_definition_name = "Storage Table Data Contributor"
-  principal_id         = azurerm_linux_function_app.scaler.identity[0].principal_id
+  principal_id         = azurerm_function_app_flex_consumption.scaler.identity[0].principal_id
 }
 
 # Service Bus — send/receive for scale events
 resource "azurerm_role_assignment" "scaler_servicebus_owner" {
   scope                = azurerm_servicebus_namespace.scaler.id
   role_definition_name = "Azure Service Bus Data Owner"
-  principal_id         = azurerm_linux_function_app.scaler.identity[0].principal_id
+  principal_id         = azurerm_function_app_flex_consumption.scaler.identity[0].principal_id
 }
 
 # ACI management — scoped to resource group (not subscription)
 resource "azurerm_role_assignment" "scaler_contributor" {
   scope                = var.create_resource_group ? azurerm_resource_group.this[0].id : "/subscriptions/${data.azurerm_client_config.current.subscription_id}/resourceGroups/${local.resource_group_name}"
   role_definition_name = "Contributor"
-  principal_id         = azurerm_linux_function_app.scaler.identity[0].principal_id
+  principal_id         = azurerm_function_app_flex_consumption.scaler.identity[0].principal_id
 }
 
 # Managed Identity Operator — needed to assign runner_pull identity to ACI
 resource "azurerm_role_assignment" "scaler_uai_operator" {
   scope                = azurerm_user_assigned_identity.runner_pull.id
   role_definition_name = "Managed Identity Operator"
-  principal_id         = azurerm_linux_function_app.scaler.identity[0].principal_id
+  principal_id         = azurerm_function_app_flex_consumption.scaler.identity[0].principal_id
 }
 
 # Key Vault secrets access
 resource "azurerm_role_assignment" "scaler_keyvault_secrets_user" {
   scope                = azurerm_key_vault.kv.id
   role_definition_name = "Key Vault Secrets User"
-  principal_id         = azurerm_linux_function_app.scaler.identity[0].principal_id
+  principal_id         = azurerm_function_app_flex_consumption.scaler.identity[0].principal_id
 }
 
 # ==============================================================================
@@ -430,7 +437,7 @@ resource "azurerm_monitor_diagnostic_setting" "servicebus" {
 
 resource "azurerm_monitor_diagnostic_setting" "function_app" {
   name                       = "diag-${local.function_app_name}"
-  target_resource_id         = azurerm_linux_function_app.scaler.id
+  target_resource_id         = azurerm_function_app_flex_consumption.scaler.id
   log_analytics_workspace_id = local.log_analytics_workspace_id
 
   enabled_log {
@@ -460,4 +467,14 @@ resource "azurerm_management_lock" "state_storage" {
   scope      = data.azurerm_storage_account.state.id
   lock_level = "CanNotDelete"
   notes      = "Protects Terraform state storage account"
+}
+
+# ==============================================================================
+# State migration — resource type change from linux_function_app to flex_consumption
+# Safe to remove after all environments have applied once with this block.
+# ==============================================================================
+
+moved {
+  from = azurerm_linux_function_app.scaler
+  to   = azurerm_function_app_flex_consumption.scaler
 }

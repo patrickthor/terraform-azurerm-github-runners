@@ -34,12 +34,12 @@ output "storage_account_id" {
 
 output "function_app_name" {
   description = "Event-driven scaler Function App name"
-  value       = azurerm_linux_function_app.scaler.name
+  value       = azurerm_function_app_flex_consumption.scaler.name
 }
 
 output "function_app_default_hostname" {
   description = "Default hostname of scaler Function App"
-  value       = azurerm_linux_function_app.scaler.default_hostname
+  value       = azurerm_function_app_flex_consumption.scaler.default_hostname
 }
 
 output "servicebus_namespace_name" {
@@ -63,7 +63,7 @@ output "runner_pull_identity" {
 
 output "scaler_identity_principal_id" {
   description = "System-assigned principal ID for scaler Function App"
-  value       = azurerm_linux_function_app.scaler.identity[0].principal_id
+  value       = azurerm_function_app_flex_consumption.scaler.identity[0].principal_id
 }
 
 output "log_analytics_workspace_id" {
