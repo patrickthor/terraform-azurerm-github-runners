@@ -50,7 +50,6 @@ locals {
   }, var.tags)
 
   scaler_base_settings = {
-    FUNCTIONS_WORKER_RUNTIME                       = "python"
     SERVICEBUS_QUEUE_NAME                          = var.servicebus_queue_name
     SERVICEBUS_NAMESPACE_FQDN                      = "${azurerm_servicebus_namespace.scaler.name}.servicebus.windows.net"
     SERVICEBUS_CONNECTION__fullyQualifiedNamespace  = "${azurerm_servicebus_namespace.scaler.name}.servicebus.windows.net"
