@@ -221,7 +221,7 @@ resource "azurerm_storage_account" "functions" {
   resource_group_name             = local.resource_group_name
   location                        = var.location
   account_tier                    = "Standard"
-  account_replication_type        = "LRS"
+  account_replication_type        = var.storage_account_replication_type
   account_kind                    = "StorageV2"
   min_tls_version                 = "TLS1_2"
   https_traffic_only_enabled      = true
@@ -474,14 +474,4 @@ resource "azurerm_management_lock" "state_storage" {
   scope      = data.azurerm_storage_account.state.id
   lock_level = "CanNotDelete"
   notes      = "Protects Terraform state storage account"
-}
-
-# ==============================================================================
-# State migration — resource type change from linux_function_app to flex_consumption
-# Safe to remove after all environments have applied once with this block.
-# ==============================================================================
-
-moved {
-  from = azurerm_linux_function_app.scaler
-  to   = azurerm_function_app_flex_consumption.scaler
 }

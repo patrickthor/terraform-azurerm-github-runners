@@ -104,7 +104,12 @@ jobs:
           CREATE_RG:              ${{ vars.CREATE_RESOURCE_GROUP || 'true' }}
           ENABLE_LOCKS:           ${{ vars.ENABLE_RESOURCE_LOCKS || 'false' }}
         run: |
-          ROLES_TF=$(echo "$RUNNER_WORKLOAD_ROLES" | python3 -c "import sys,json; roles=[r.strip() for r in sys.stdin.read().strip().split(',') if r.strip()]; print(json.dumps(roles))")
+          # Parse comma-separated roles into JSON array using jq
+          if [ -z "$RUNNER_WORKLOAD_ROLES" ]; then
+            ROLES_TF="[]"
+          else
+            ROLES_TF=$(echo "$RUNNER_WORKLOAD_ROLES" | jq -R 'split(",") | map(select(length > 0) | gsub("^\\s+|\\s+$"; ""))')
+          fi
           cat > terraform.tfvars <<EOF
           workload        = "$WORKLOAD"
           environment     = "$ENVIRONMENT"
