@@ -215,7 +215,7 @@ resource "azurerm_role_assignment" "runner_workload" {
 }
 
 # ==============================================================================
-# Function App Storage (managed identity — no access keys)
+# Function App Storage
 # ==============================================================================
 
 resource "azurerm_storage_account" "functions" {
@@ -340,13 +340,6 @@ resource "azurerm_function_app_flex_consumption" "scaler" {
     precondition {
       condition     = local.has_complete_app_auth
       error_message = "GitHub App auth is required. Set github_app_id_secret_name, github_app_installation_id_secret_name, and github_app_private_key_secret_name."
-    }
-    precondition {
-      condition = (
-        (!local.has_github_app_id && !local.has_github_app_inst && !local.has_github_app_key) ||
-        local.has_complete_app_auth
-      )
-      error_message = "GitHub App auth requires all three values: github_app_id_secret_name, github_app_installation_id_secret_name, and github_app_private_key_secret_name."
     }
     precondition {
       condition     = var.runner_min_instances <= var.runner_max_instances

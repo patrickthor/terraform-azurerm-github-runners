@@ -27,11 +27,6 @@ output "key_vault_id" {
   value       = azurerm_key_vault.kv.id
 }
 
-output "storage_account_id" {
-  description = "The ID of the Terraform-state storage account (only available when enable_resource_locks = true)"
-  value       = var.enable_resource_locks ? data.azurerm_storage_account.state[0].id : null
-}
-
 output "function_app_name" {
   description = "Event-driven scaler Function App name"
   value       = azurerm_function_app_flex_consumption.scaler.name

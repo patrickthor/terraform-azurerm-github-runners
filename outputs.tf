@@ -27,11 +27,6 @@ output "key_vault_id" {
   value       = module.runners.key_vault_id
 }
 
-output "storage_account_id" {
-  description = "The ID of the Terraform-state storage account (managed by bootstrap)"
-  value       = module.runners.storage_account_id
-}
-
 output "function_app_name" {
   description = "Event-driven scaler Function App name"
   value       = module.runners.function_app_name

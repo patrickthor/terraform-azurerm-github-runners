@@ -372,7 +372,6 @@ All resource names are auto-generated from `workload`/`environment`/`instance` u
 | `webhook_secret_secret_name` | `null` | Key Vault secret name for webhook HMAC validation |
 | `runner_min_instances` | `0` | Minimum live runners |
 | `runner_max_instances` | `5` | Maximum live runners |
-| `runner_idle_timeout_minutes` | `15` | Minutes before idle runner is terminated |
 | `runner_completed_ttl_minutes` | `5` | Minutes to retain a completed runner before deletion |
 | `max_runner_runtime_hours` | `2` | Hard cap on runner lifetime |
 | `cpu` | `2` | CPU cores per runner |

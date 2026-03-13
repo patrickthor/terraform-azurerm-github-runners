@@ -107,7 +107,7 @@ variable "key_vault_name" {
 }
 
 variable "storage_account_name" {
-  description = "Override: Terraform-state storage account name (managed by bootstrap). Default: st{workload}{environment}{instance}"
+  description = "Override: storage account name used for resource locks (only relevant when enable_resource_locks = true). Default: st{workload}{environment}{instance}"
   type        = string
   default     = null
   validation {
@@ -244,16 +244,6 @@ variable "runner_max_instances" {
   }
 }
 
-variable "runner_idle_timeout_minutes" {
-  description = "Idle timeout in minutes before scaler terminates unused runners"
-  type        = number
-  default     = 15
-  validation {
-    condition     = var.runner_idle_timeout_minutes >= 1 && var.runner_idle_timeout_minutes <= 240
-    error_message = "The runner_idle_timeout_minutes must be between 1 and 240."
-  }
-}
-
 variable "runner_labels" {
   description = "Comma-separated labels for GitHub runners"
   type        = string
@@ -277,16 +267,6 @@ variable "runner_completed_ttl_minutes" {
   validation {
     condition     = var.runner_completed_ttl_minutes >= 1 && var.runner_completed_ttl_minutes <= 60
     error_message = "Completed TTL must be between 1 and 60 minutes."
-  }
-}
-
-variable "event_poll_interval_seconds" {
-  description = "Polling cadence for scaler worker when processing queue messages"
-  type        = number
-  default     = 5
-  validation {
-    condition     = var.event_poll_interval_seconds >= 1 && var.event_poll_interval_seconds <= 60
-    error_message = "The event_poll_interval_seconds must be between 1 and 60."
   }
 }
 

@@ -51,11 +51,9 @@ module "runners" {
   memory                       = var.memory
   runner_min_instances          = var.runner_min_instances
   runner_max_instances          = var.runner_max_instances
-  runner_idle_timeout_minutes   = var.runner_idle_timeout_minutes
   runner_labels                 = var.runner_labels
   max_runner_runtime_hours      = var.max_runner_runtime_hours
   runner_completed_ttl_minutes  = var.runner_completed_ttl_minutes
-  event_poll_interval_seconds   = var.event_poll_interval_seconds
 
   # Security
   runner_workload_roles = var.runner_workload_roles

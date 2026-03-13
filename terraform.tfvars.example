@@ -59,7 +59,6 @@ github_app_private_key_secret_name     = "github-app-private-key"
 # memory                         = 4
 # runner_min_instances            = 0
 # runner_max_instances            = 5
-# runner_idle_timeout_minutes     = 15
 # max_runner_runtime_hours        = 2
 # runner_completed_ttl_minutes    = 5
 # runner_workload_roles           = []
