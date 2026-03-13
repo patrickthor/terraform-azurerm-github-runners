@@ -28,8 +28,8 @@ output "key_vault_id" {
 }
 
 output "storage_account_id" {
-  description = "The ID of the Terraform-state storage account (managed by bootstrap)"
-  value       = data.azurerm_storage_account.state.id
+  description = "The ID of the Terraform-state storage account (only available when enable_resource_locks = true)"
+  value       = var.enable_resource_locks ? data.azurerm_storage_account.state[0].id : null
 }
 
 output "function_app_name" {

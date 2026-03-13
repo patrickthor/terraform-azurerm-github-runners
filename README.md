@@ -30,7 +30,7 @@ As a Terraform module (recommended for external consumers):
 
 ```hcl
 module "runners" {
-  source = "github.com/patrickthor/github-runners//modules/runners?ref=v1.0.0"
+  source = "github.com/patrickthor/github-runners//modules/runners?ref=v2.0.0"
 
   workload    = "runner"
   environment = "prod"
@@ -46,17 +46,22 @@ module "runners" {
 }
 ```
 
+See [`examples/basic`](examples/basic) for a complete minimal example, or [`examples/demo`](examples/demo) for a workflow that runs on the self-hosted runners.
+
+> **Note for module consumers**: The Terraform module provisions all infrastructure. The scaler Function App code (`scaler-function/`) must be deployed separately — see [Deploying the scaler function](#deploying-the-scaler-function) below.
+
 ## Project structure
 
 ```
 ├── modules/runners/     # Reusable Terraform module (all resources)
 ├── scaler-function/     # Python Function App code (deployed separately)
-├── bootstrap/           # One-time state storage provisioning
+├── bootstrap/           # One-time state storage provisioning (this repo only)
+├── examples/basic/      # Minimal module usage example for consumers
 ├── examples/demo/       # Demo workflow using self-hosted runners
-├── main.tf              # Root wrapper (calls modules/runners)
+├── main.tf              # Root wrapper used by this repo's CI/CD
 ├── variables.tf         # Root variables (passed through to module)
 ├── outputs.tf           # Root outputs (passed through from module)
-└── .github/workflows/   # CI/CD pipelines
+└── .github/workflows/   # CI/CD pipelines (this repo only)
 ```
 
 **Provisioned resources**
@@ -404,9 +409,41 @@ All resource names are auto-generated from `workload`/`environment`/`instance` u
 
 ---
 
+## Deploying the scaler function
+
+The Terraform module provisions all Azure infrastructure, but the Python Function App code (`scaler-function/`) must be deployed separately. This is a one-time step after `terraform apply`, plus whenever the scaler code changes.
+
+### For module consumers
+
+Copy the `scaler-function/` directory into your project, or reference it from this repo. Then deploy:
+
+```bash
+# 1. Import the runner image into your ACR
+ACR_NAME=$(terraform output -raw acr_login_server | cut -d. -f1)
+az acr import --name "$ACR_NAME" \
+  --source ghcr.io/myoung34/docker-github-actions-runner:latest \
+  --image actions-runner:latest --force
+
+# 2. Deploy the scaler function
+FUNC_APP=$(terraform output -raw function_app_name)
+RG=$(terraform output -raw resource_group_name)
+
+cd scaler-function
+pip install --target=".python_packages/lib/site-packages" -r requirements.txt
+zip -r ../deploy.zip . -x "local.settings*.json" -x "__pycache__/*" -x "*.pyc" -x "DEPLOYMENT.md"
+cd ..
+
+az functionapp deployment source config-zip \
+  --resource-group "$RG" --name "$FUNC_APP" --src deploy.zip --timeout 300
+```
+
+> If the Function App has IP restrictions enabled (default), you may need to temporarily whitelist your IP. See the deploy workflow for an example of how to do this automatically.
+
+---
+
 ## Runner image
 
-On every `terraform apply`, this module imports the public runner image into ACR:
+On every `terraform apply` in this repo, the deploy workflow imports the public runner image into ACR:
 
 - **Source**: `ghcr.io/myoung34/docker-github-actions-runner:latest`
 - **Target**: `<acr_login_server>/actions-runner:latest`

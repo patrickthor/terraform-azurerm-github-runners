@@ -152,7 +152,9 @@ resource "azurerm_key_vault" "kv" {
 }
 
 # State storage is provisioned by the bootstrap module — reference only.
+# Only looked up when enable_resource_locks is true (to apply a CanNotDelete lock).
 data "azurerm_storage_account" "state" {
+  count               = var.enable_resource_locks ? 1 : 0
   name                = local.storage_account_name
   resource_group_name = local.resource_group_name
 
@@ -471,7 +473,7 @@ resource "azurerm_management_lock" "key_vault" {
 resource "azurerm_management_lock" "state_storage" {
   count      = var.enable_resource_locks ? 1 : 0
   name       = "lock-${local.storage_account_name}"
-  scope      = data.azurerm_storage_account.state.id
+  scope      = data.azurerm_storage_account.state[0].id
   lock_level = "CanNotDelete"
   notes      = "Protects Terraform state storage account"
 }
