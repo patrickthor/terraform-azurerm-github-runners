@@ -43,7 +43,7 @@ jobs:
       - name: Terraform Init
         run: |
           for attempt in 1 2 3; do
-            terraform init && exit 0
+            terraform init -upgrade && exit 0
             echo "Attempt $attempt/3 failed — retrying in 30s..."
             sleep 30
           done
