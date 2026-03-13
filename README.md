@@ -56,7 +56,7 @@ See [`examples/basic`](examples/basic) for a complete minimal example, or [`exam
 ├── modules/runners/     # Reusable Terraform module (all resources)
 ├── scaler-function/     # Python Function App code (deployed separately)
 ├── bootstrap/           # One-time state storage provisioning (this repo only)
-├── examples/basic/      # Minimal module usage example for consumers
+├── examples/basic/      # Minimal module usage example for consumers (includes CI/CD workflow)
 ├── examples/demo/       # Demo workflow using self-hosted runners
 ├── main.tf              # Root wrapper used by this repo's CI/CD
 ├── variables.tf         # Root variables (passed through to module)
@@ -415,7 +415,11 @@ The Terraform module provisions all Azure infrastructure, but the Python Functio
 
 ### For module consumers
 
-Copy the `scaler-function/` directory into your project, or reference it from this repo. Then deploy:
+The easiest approach is to copy the example workflow from [`examples/basic/.github/workflows/deploy-runners.yml`](examples/basic/.github/workflows/deploy-runners.yml) into your repo. It handles everything: Terraform apply, ACR image import, and scaler function deployment.
+
+The workflow fetches the scaler function code from this repo at the pinned version tag, so you don't need to copy the Python code into your project.
+
+Alternatively, deploy manually:
 
 ```bash
 # 1. Import the runner image into your ACR

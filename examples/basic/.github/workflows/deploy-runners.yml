@@ -1,0 +1,174 @@
+# ==============================================================================
+# Deploy GitHub Runners — Infrastructure + Scaler Function
+#
+# Copy this workflow into your project's .github/workflows/ directory.
+# It deploys the Terraform module and the scaler Function App code.
+#
+# Required GitHub configuration (Settings → Secrets and variables):
+#
+#   Secrets:
+#     AZURE_CLIENT_ID       — Service principal client ID (OIDC)
+#     AZURE_TENANT_ID       — Azure AD tenant ID
+#     AZURE_SUBSCRIPTION_ID — Target subscription ID
+#
+#   Variables:
+#     RUNNER_MODULE_REF     — Git ref for the module (e.g. v2.0.0)
+# ==============================================================================
+
+name: Deploy Runners
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "infra/runners/**"
+      - ".github/workflows/deploy-runners.yml"
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  # Adjust this path to where your Terraform config lives
+  TF_WORKING_DIR: infra/runners
+  # Module source repo — the scaler function code is fetched from here
+  MODULE_REPO: patrickthor/github-runners
+  MODULE_REF: ${{ vars.RUNNER_MODULE_REF || 'v2.0.0' }}
+
+jobs:
+  # ----------------------------------------------------------------------------
+  # Stage 1 — Terraform infrastructure
+  # ----------------------------------------------------------------------------
+  infra:
+    name: Infrastructure
+    runs-on: ubuntu-latest
+
+    env:
+      ARM_USE_OIDC: true
+      ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+    outputs:
+      function_app_name: ${{ steps.tf-output.outputs.function_app_name }}
+      resource_group: ${{ steps.tf-output.outputs.resource_group_name }}
+      acr_name: ${{ steps.tf-output.outputs.acr_login_server }}
+
+    defaults:
+      run:
+        working-directory: ${{ env.TF_WORKING_DIR }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "~> 1.9"
+          terraform_wrapper: false
+
+      - name: Terraform init
+        run: terraform init -input=false -upgrade
+
+      - name: Terraform validate
+        run: terraform validate
+
+      - name: Terraform plan
+        run: terraform plan -out=tfplan -input=false
+
+      - name: Terraform apply
+        run: terraform apply -auto-approve -input=false tfplan
+
+      - name: Import runner image into ACR
+        run: |
+          ACR_SERVER=$(terraform output -raw acr_login_server)
+          ACR_NAME=$(echo "$ACR_SERVER" | cut -d. -f1)
+          az acr import \
+            --name "$ACR_NAME" \
+            --source ghcr.io/myoung34/docker-github-actions-runner:latest \
+            --image actions-runner:latest \
+            --force
+
+      - name: Capture outputs
+        id: tf-output
+        run: |
+          echo "function_app_name=$(terraform output -raw function_app_name)" >> "$GITHUB_OUTPUT"
+          echo "resource_group_name=$(terraform output -raw resource_group_name)" >> "$GITHUB_OUTPUT"
+          echo "acr_login_server=$(terraform output -raw acr_login_server)" >> "$GITHUB_OUTPUT"
+
+  # ----------------------------------------------------------------------------
+  # Stage 2 — Scaler Function App code
+  #
+  # Fetches the scaler function from the module repo and deploys it.
+  # The runner's public IP is temporarily whitelisted for deployment.
+  # ----------------------------------------------------------------------------
+  deploy-scaler:
+    name: Scaler Function
+    needs: infra
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Fetch scaler function code
+        run: |
+          curl -sL "https://github.com/${{ env.MODULE_REPO }}/archive/refs/tags/${{ env.MODULE_REF }}.tar.gz" \
+            | tar xz --strip-components=1 -C . "*/scaler-function"
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Get runner public IP
+        id: runner-ip
+        run: |
+          RUNNER_IP=$(curl -s https://api.ipify.org)
+          echo "ip=${RUNNER_IP}" >> "$GITHUB_OUTPUT"
+
+      - name: Whitelist runner IP on Function App
+        run: |
+          az functionapp config access-restriction add \
+            --resource-group "${{ needs.infra.outputs.resource_group }}" \
+            --name "${{ needs.infra.outputs.function_app_name }}" \
+            --rule-name "github-actions-deploy" \
+            --action Allow \
+            --ip-address "${{ steps.runner-ip.outputs.ip }}/32" \
+            --priority 50 \
+            -o none
+
+      - name: Build and deploy
+        working-directory: scaler-function
+        run: |
+          pip install --target=".python_packages/lib/site-packages" -r requirements.txt
+          zip -r ../deploy.zip . \
+            -x "local.settings*.json" -x "__pycache__/*" -x "*.pyc" -x "DEPLOYMENT.md"
+
+          az functionapp deployment source config-zip \
+            --resource-group "${{ needs.infra.outputs.resource_group }}" \
+            --name "${{ needs.infra.outputs.function_app_name }}" \
+            --src ../deploy.zip \
+            --timeout 300
+
+      - name: Remove runner IP from Function App
+        if: always()
+        run: |
+          az functionapp config access-restriction remove \
+            --resource-group "${{ needs.infra.outputs.resource_group }}" \
+            --name "${{ needs.infra.outputs.function_app_name }}" \
+            --rule-name "github-actions-deploy" \
+            -o none || true
