@@ -6,6 +6,32 @@ Verified against official Microsoft documentation and Azure Well-Architected Fra
 
 ## Remaining Improvements
 
+### Reliability
+
+#### Demo workflow retries re-apply a stale plan file
+
+**Current**: When `terraform apply tfplan` fails on attempt 1, attempts 2 and 3 try to apply the same plan file, which is now stale (state changed during the failed apply).
+
+**Recommended**: Re-plan before re-applying, or use `terraform apply -auto-approve` without a plan file for retries.
+
+#### Deploy workflow has no retry on `terraform apply`
+
+**Current**: The infra job in `deploy.yml` runs `terraform apply` once with no retry.
+
+**Recommended**: Add a retry loop (like the demo workflow) to handle transient Azure WAF 403s and ARM throttling.
+
+#### Pool `ServiceBusClient` in `_servicebus_send`
+
+**Current**: Every webhook call creates a new `ServiceBusClient` + `DefaultAzureCredential`, opening a fresh AMQP connection.
+
+**Recommended**: Use a module-level singleton (like `_http_session`) to pool the connection. Reduces latency and resource churn under burst webhook traffic.
+
+#### Re-list after prune doesn't re-check for duplicate runners
+
+**Current**: After `_prune_stale_runners` triggers a re-list, the duplicate check `_has_runner_for_workflow_job` ran against the old list. The re-listed runners aren't checked for duplicates.
+
+**Recommended**: Move the duplicate check after the conditional re-list. Edge case but possible under heavy concurrent load.
+
 ### Security & RBAC
 
 #### Tighten Function App RBAC scope
@@ -34,19 +60,47 @@ Verified against official Microsoft documentation and Azure Well-Architected Fra
 
 **Recommended**: Pin exact versions or use a lockfile to prevent unexpected breaking changes.
 
+#### Document broad subscription-level roles in README
+
+**Current**: README step 2 grants `Contributor`, `User Access Administrator`, and `Role Based Access Control Administrator` at subscription scope.
+
+**Recommended**: Add a note about scoping these down for production, or provide a least-privilege alternative using resource group scope where possible.
+
+### Performance
+
+#### Pool `DefaultAzureCredential` as a module-level singleton
+
+**Current**: `_arm_token()` creates a new `DefaultAzureCredential()` on every call. Inside `_arm_request`'s retry loop, each attempt instantiates a fresh credential.
+
+**Recommended**: Create the credential once at module level. `DefaultAzureCredential` handles its own internal token caching and refresh.
+
 ### Python / Function App
 
-#### Optimize cleanup timer for high runner counts
+#### Eliminate duplicate `SERVICEBUS_NAMESPACE_FQDN` app setting
 
-**Current**: `cleanup_timer` calls individual GET per runner every minute. At `max_instances=200`, that's 200+ ARM calls/min.
+**Current**: Both `SERVICEBUS_NAMESPACE_FQDN` and `SERVICEBUS_CONNECTION__fullyQualifiedNamespace` contain the same value. The Python code reads `SERVICEBUS_NAMESPACE_FQDN` in `_servicebus_send()`.
 
-**Recommended**: Add caching or batch operations. Only relevant if scaling beyond 10-20 runners.
+**Recommended**: Change `_servicebus_send()` to read `SERVICEBUS_CONNECTION__fullyQualifiedNamespace` instead, and remove the duplicate `SERVICEBUS_NAMESPACE_FQDN` app setting.
 
 #### Pin Python dependencies
 
 **Current**: `requirements.txt` uses minimum version constraints (`azure-identity>=1.16.0`) without upper bounds.
 
 **Recommended**: Pin exact versions (e.g., `azure-functions==1.21.3`) for reproducible deployments.
+
+#### Verify `host.json` extension bundle version range
+
+**Current**: Extension bundle version is `[4.*, 5.0.0)`.
+
+**Recommended**: Verify this is still the recommended range for Azure Functions v4 runtime. Update if a newer bundle is available.
+
+### Code Style
+
+#### Bootstrap `providers.tf` inconsistency
+
+**Current**: `bootstrap/versions.tf` has the provider block inline instead of a separate `providers.tf`.
+
+**Recommended**: Move the provider to `bootstrap/providers.tf` for consistency with the rest of the repo.
 
 ---
 
@@ -95,6 +149,13 @@ Verified against official Microsoft documentation and Azure Well-Architected Fra
 - Remove private key material from logs — `_github_installation_access_token` no longer logs the first 30 chars of the private key (security hygiene)
 - Remove stale `storage_account_id` from README outputs table (was removed from code in previous cleanup)
 - Make cleanup timer schedule configurable — new `cleanup_timer_schedule` variable (NCRONTAB), default changed from every 1 minute to every 3 minutes to reduce ARM API calls at scale
+
+### Module Cleanup
+- Remove unused `runner_idle_timeout_minutes` and `event_poll_interval_seconds` variables — declared but never read by Python code
+- Remove redundant GitHub App auth precondition — first precondition already enforces all-set
+- Remove `storage_account_id` output — only relevant to bootstrap, confusing for consumers
+- Fix `storage_account_name` variable description — clarify only used with `enable_resource_locks`
+- Fix stale "managed identity — no access keys" comment on function storage section
 
 ---
 
