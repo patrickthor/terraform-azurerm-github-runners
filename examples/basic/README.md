@@ -45,47 +45,21 @@ Follow [step 2 in the main README](../../README.md#2-provision-azure-identity-an
 | `GH_REPO` | `your-org/your-repo` | Repository in org/repo format |
 | `RUNNER_MODULE_REF` | `v3.0.0` | Module version tag (optional, defaults to v3.0.0) |
 | `RUNNER_WORKLOAD_ROLES` | `Contributor` | Comma-separated Azure roles for runner identity (optional) |
-| `STATE_RESOURCE_GROUP` | `rg-tfstate` | Resource group containing the state storage account |
-| `STATE_STORAGE_ACCOUNT` | `sttfstate1a2b` | Storage account name for Terraform state |
+| `STATE_RESOURCE_GROUP` | `rg-tfstate` | Resource group for state storage (created automatically if missing) |
+| `STATE_STORAGE_ACCOUNT` | `sttfstate1a2b` | Storage account name for Terraform state (created automatically if missing) |
 | `STATE_CONTAINER` | `tfstate` | Blob container name (optional, defaults to tfstate) |
 
-### 4. Configure Terraform state backend
+### 4. Push to main
 
-The workflow generates a `backend.hcl` file at runtime from the `STATE_*` GitHub variables above, so you don't need to hardcode backend values in your Terraform files.
+The workflow is fully self-service. On the first run it will:
+- Create the state storage account and blob container (if they don't exist)
+- Grant the CI identity `Storage Blob Data Contributor` on the storage account
+- Generate `terraform.tfvars` and `backend.hcl` from your GitHub variables
+- Run `terraform apply` (infrastructure)
+- Import the runner container image into ACR
+- Deploy the scaler function code (fetched from the module repo)
 
-You just need a storage account. Either use an existing one or create one:
-
-```bash
-LOCATION=westeurope
-STATE_RG=rg-tfstate
-STATE_SA=sttfstate$(openssl rand -hex 4)  # must be globally unique
-
-az group create --name $STATE_RG --location $LOCATION
-az storage account create \
-  --name $STATE_SA --resource-group $STATE_RG --location $LOCATION \
-  --sku Standard_LRS --allow-blob-public-access false
-az storage container create \
-  --name tfstate --account-name $STATE_SA
-
-# Grant your CI service principal access
-SP_OBJECT_ID=$(az ad sp show --id <AZURE_CLIENT_ID> --query id -o tsv)
-az role assignment create \
-  --assignee-object-id $SP_OBJECT_ID --assignee-principal-type ServicePrincipal \
-  --role "Storage Blob Data Contributor" \
-  --scope $(az storage account show --name $STATE_SA --query id -o tsv)
-```
-
-Then set the three `STATE_*` variables in your GitHub repo (step 3 above).
-
-> The workflow authenticates via OIDC, so no storage access keys are needed.
-
-### 5. Push to main
-
-The workflow handles everything:
-- Generates `terraform.tfvars` from your GitHub variables
-- Runs `terraform apply` (infrastructure)
-- Imports the runner container image into ACR
-- Deploys the scaler function code (fetched from the module repo)
+Subsequent runs skip the storage creation and just connect to the existing state.
 
 ## After first deploy
 

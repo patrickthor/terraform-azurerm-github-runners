@@ -112,16 +112,50 @@ jobs:
           runner_workload_roles = $ROLES_TF
           EOF
 
+      - name: Ensure state storage exists
+        env:
+          STATE_RG:        ${{ vars.STATE_RESOURCE_GROUP }}
+          STATE_SA:        ${{ vars.STATE_STORAGE_ACCOUNT }}
+          STATE_CONTAINER: ${{ vars.STATE_CONTAINER || 'tfstate' }}
+          LOCATION:        ${{ vars.AZURE_LOCATION }}
+          CLIENT_ID:       ${{ secrets.AZURE_CLIENT_ID }}
+        run: |
+          if [ -z "$STATE_RG" ] || [ -z "$STATE_SA" ]; then
+            echo "::error::STATE_RESOURCE_GROUP and STATE_STORAGE_ACCOUNT variables must be set."
+            exit 1
+          fi
+
+          # Create resource group if it doesn't exist
+          az group create --name "$STATE_RG" --location "$LOCATION" -o none 2>/dev/null || true
+
+          # Create storage account if it doesn't exist
+          if ! az storage account show --name "$STATE_SA" --resource-group "$STATE_RG" -o none 2>/dev/null; then
+            echo "Creating state storage account $STATE_SA..."
+            az storage account create \
+              --name "$STATE_SA" --resource-group "$STATE_RG" --location "$LOCATION" \
+              --sku Standard_LRS --allow-blob-public-access false -o none
+
+            # Grant the CI identity access to the new storage account
+            PRINCIPAL_ID=$(az ad sp show --id "$CLIENT_ID" --query id -o tsv)
+            STORAGE_ID=$(az storage account show --name "$STATE_SA" --resource-group "$STATE_RG" --query id -o tsv)
+            az role assignment create \
+              --assignee-object-id "$PRINCIPAL_ID" --assignee-principal-type ServicePrincipal \
+              --role "Storage Blob Data Contributor" --scope "$STORAGE_ID" -o none
+            echo "Waiting 30s for role assignment to propagate..."
+            sleep 30
+          fi
+
+          # Create blob container if it doesn't exist
+          az storage container create \
+            --name "$STATE_CONTAINER" --account-name "$STATE_SA" \
+            --auth-mode login -o none 2>/dev/null || true
+
       - name: Generate backend.hcl
         env:
           STATE_RG:        ${{ vars.STATE_RESOURCE_GROUP }}
           STATE_SA:        ${{ vars.STATE_STORAGE_ACCOUNT }}
           STATE_CONTAINER: ${{ vars.STATE_CONTAINER || 'tfstate' }}
         run: |
-          if [ -z "$STATE_RG" ] || [ -z "$STATE_SA" ]; then
-            echo "::error::STATE_RESOURCE_GROUP and STATE_STORAGE_ACCOUNT variables must be set. See step 4 in the example README."
-            exit 1
-          fi
           cat > backend.hcl <<EOF
           resource_group_name  = "$STATE_RG"
           storage_account_name = "$STATE_SA"
