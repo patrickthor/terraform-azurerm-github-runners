@@ -109,6 +109,13 @@ jobs:
           runner_workload_roles = $ROLES_TF
           EOF
 
+      - name: Check backend configuration
+        run: |
+          if ! grep -q '^[[:space:]]*backend "azurerm"' versions.tf; then
+            echo "::error::Terraform backend is not configured. Uncomment the backend block in versions.tf and provide your state storage details. See step 4 in examples/basic/README.md."
+            exit 1
+          fi
+
       - name: Terraform init
         run: terraform init -input=false -upgrade
 
