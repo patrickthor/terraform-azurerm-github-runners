@@ -73,12 +73,13 @@ The example workflow handles Terraform apply, ACR image import, and scaler funct
 | `environment` | Environment identifier (e.g. `poc`, `dev`, `prod`) |
 | `instance` | Instance identifier for uniqueness (e.g. `bvt`, `001`) |
 | `location` | Azure region (e.g. `westeurope`) |
-| `subscription_id` | Azure subscription ID |
 | `github_org` | GitHub organisation name |
 | `github_repo` | Repository in `org/repo` format |
 | `github_app_id_secret_name` | Key Vault secret name for GitHub App ID |
 | `github_app_installation_id_secret_name` | Key Vault secret name for installation ID |
 | `github_app_private_key_secret_name` | Key Vault secret name for private key PEM |
+
+> `subscription_id` is not a module variable — set it on the `azurerm` provider block instead. The module reads it from `data.azurerm_client_config.current`.
 
 ### Resource name overrides
 

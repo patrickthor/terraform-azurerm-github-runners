@@ -21,7 +21,6 @@
     "AZURE_LOCATION": "westeurope",
     "GITHUB_REPO": "<org>/<repo>",
     "GITHUB_ORG": "<org>",
-    "GITHUB_ENVIRONMENT": "production",
     "CLEANUP_TIMER_SCHEDULE": "0 */3 * * * *",
     "GITHUB_APP_ID": "<github-app-id>",
     "GITHUB_APP_INSTALLATION_ID": "<github-app-installation-id>",

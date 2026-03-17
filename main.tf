@@ -60,7 +60,6 @@ module "runners" {
   enable_resource_locks = var.enable_resource_locks
 
   # Service config
-  github_environment           = var.github_environment
   cleanup_timer_schedule       = var.cleanup_timer_schedule
   servicebus_queue_name        = var.servicebus_queue_name
   function_runtime_version     = var.function_runtime_version

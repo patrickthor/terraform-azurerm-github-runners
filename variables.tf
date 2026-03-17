@@ -299,12 +299,6 @@ variable "enable_resource_locks" {
 # Service Configuration
 # ==============================================================================
 
-variable "github_environment" {
-  description = "GitHub environment name"
-  type        = string
-  default     = "production"
-}
-
 variable "servicebus_queue_name" {
   description = "Queue name used to buffer scale requests"
   type        = string

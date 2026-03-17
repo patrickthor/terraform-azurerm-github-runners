@@ -70,7 +70,6 @@ locals {
     AZURE_LOCATION                 = var.location
     GITHUB_REPO                    = var.github_repo
     GITHUB_ORG                     = var.github_org
-    GITHUB_ENVIRONMENT             = var.github_environment
     CLEANUP_TIMER_SCHEDULE         = var.cleanup_timer_schedule
   }
 }

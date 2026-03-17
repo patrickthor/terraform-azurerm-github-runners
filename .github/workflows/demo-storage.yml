@@ -37,7 +37,7 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: 1.8.5
+          terraform_version: "~> 1.9"
           terraform_wrapper: false
 
       - name: Terraform Init
@@ -67,7 +67,7 @@ jobs:
         if: github.event_name == 'workflow_dispatch' && inputs.apply == true
         run: |
           for attempt in 1 2 3; do
-            terraform apply -auto-approve tfplan && exit 0
+            terraform plan -out=tfplan && terraform apply -auto-approve tfplan && exit 0
             echo "Attempt $attempt/3 failed — retrying in 30s..."
             sleep 30
           done

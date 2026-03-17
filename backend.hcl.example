@@ -12,3 +12,8 @@ storage_account_name = "strunnerpocbvt"
 container_name       = "tfstate"
 key                  = "github-runners.tfstate"
 use_azuread_auth     = true
+
+# Note: use_azuread_auth works for local dev (az login) and CI with service
+# principals. For GitHub Actions OIDC, the deploy workflow sets this in the
+# generated backend.hcl. The examples/basic backend block uses use_oidc = true
+# instead — both are valid depending on the auth method.
