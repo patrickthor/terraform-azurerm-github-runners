@@ -21,6 +21,8 @@ Copy this directory into your project (e.g., as `infra/runners/`) and copy `.git
 
 Follow [step 2 in the main README](../../README.md#2-provision-azure-identity-and-permissions) to create the service principal with OIDC trust.
 
+> When creating the federated credential, set the `subject` to your own repository (e.g. `repo:your-org/your-repo:ref:refs/heads/main`), not the module source repo.
+
 ### 3. Configure GitHub secrets and variables
 
 **Secrets** (Settings → Secrets and variables → Actions → Repository secrets):
@@ -44,9 +46,49 @@ Follow [step 2 in the main README](../../README.md#2-provision-azure-identity-an
 | `RUNNER_MODULE_REF` | `v2.0.0` | Module version tag (optional, defaults to v2.0.0) |
 | `RUNNER_WORKLOAD_ROLES` | `Contributor` | Comma-separated Azure roles for runner identity (optional) |
 
-### 4. Configure Terraform backend
+### 4. Configure Terraform state backend
 
-Uncomment and configure the backend block in `versions.tf`, or use local state for testing.
+By default, `versions.tf` uses local state (the backend block is commented out). For team use or CI/CD, configure a remote backend:
+
+**Option A — Use the module repo's bootstrap workflow** (if you have access):
+The bootstrap module in the source repo creates a Storage Account for Terraform state. Ask the module maintainer for the backend values.
+
+**Option B — Create your own state storage**:
+
+```bash
+# Create a storage account for Terraform state
+LOCATION=westeurope
+STATE_RG=rg-tfstate
+STATE_SA=sttfstate$(openssl rand -hex 4)  # must be globally unique
+
+az group create --name $STATE_RG --location $LOCATION
+az storage account create \
+  --name $STATE_SA --resource-group $STATE_RG --location $LOCATION \
+  --sku Standard_LRS --allow-blob-public-access false
+az storage container create \
+  --name tfstate --account-name $STATE_SA
+
+# Grant your CI service principal access
+SP_OBJECT_ID=$(az ad sp show --id <AZURE_CLIENT_ID> --query id -o tsv)
+az role assignment create \
+  --assignee-object-id $SP_OBJECT_ID --assignee-principal-type ServicePrincipal \
+  --role "Storage Blob Data Contributor" \
+  --scope $(az storage account show --name $STATE_SA --query id -o tsv)
+```
+
+Then uncomment the backend block in `versions.tf` and configure it:
+
+```hcl
+backend "azurerm" {
+  resource_group_name  = "rg-tfstate"
+  storage_account_name = "sttfstate..."
+  container_name       = "tfstate"
+  key                  = "runners.tfstate"
+  use_oidc             = true
+}
+```
+
+> The workflow authenticates via OIDC, so `use_oidc = true` is required. No storage access keys needed.
 
 ### 5. Push to main
 
@@ -61,3 +103,11 @@ The workflow handles everything:
 1. Store GitHub App secrets in the Key Vault — see [main README step 6](../../README.md#6-store-github-app-secrets-in-key-vault)
 2. Register the GitHub webhook — see [main README step 7](../../README.md#7-register-the-webhook-in-github)
 3. Trigger a workflow with `runs-on: [self-hosted, azure, container-instance]` to test
+
+## Troubleshooting
+
+**Key Vault secrets timing**: The Function App starts immediately after `terraform apply`, but Key Vault secrets (step 6) aren't stored yet. The scaler will log errors until the secrets exist — this is expected. Store the secrets, then the next webhook event will work.
+
+**GitHub App installation scope**: The App must be installed on the specific repository that sends webhook events. If you created an org-level App, install it on the target repo via the App's "Install" page.
+
+**OIDC federated credential subject mismatch**: The `subject` in the federated credential must exactly match your repo and branch. A `repo:wrong-org/wrong-repo:ref:refs/heads/main` subject will cause `AADSTS700024` errors in the workflow.

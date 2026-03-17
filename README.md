@@ -20,7 +20,7 @@ Azure Function App (scale_worker)
 Azure Container Instances  ──►  ACR (actions-runner image)
      │
      ▼
-Azure Function App (cleanup_timer)  [runs every 1 min]
+Azure Function App (cleanup_timer)  [runs every 3 min]
      │  removes stale / completed runners
 ```
 
@@ -49,6 +49,18 @@ module "runners" {
 See [`examples/basic`](examples/basic) for a complete minimal example, or [`examples/demo`](examples/demo) for a workflow that runs on the self-hosted runners.
 
 > **Note for module consumers**: The Terraform module provisions all infrastructure. The scaler Function App code (`scaler-function/`) must be deployed separately — see [Deploying the scaler function](#deploying-the-scaler-function) below.
+
+## Adopting this module in your project
+
+If you're consuming this as a Terraform module (not developing the module itself), here's the shortest path:
+
+1. Complete the [prerequisites](#prerequisites) (Terraform, Azure CLI, GitHub App)
+2. Create the Azure service principal with OIDC trust — [step 2](#2-provision-azure-identity-and-permissions)
+3. Follow the [`examples/basic` setup guide](examples/basic/README.md) — it includes ready-to-use Terraform files, a CI/CD workflow, and instructions for GitHub secrets/variables and Terraform state backend
+4. After the first deploy, store your GitHub App secrets in Key Vault — [step 6](#6-store-github-app-secrets-in-key-vault)
+5. Register the webhook in GitHub — [step 7](#7-register-the-webhook-in-github)
+
+The example workflow handles Terraform apply, ACR image import, and scaler function deployment in a single pipeline. You don't need to copy the Python code into your project.
 
 ## Project structure
 
@@ -463,7 +475,7 @@ The control plane (`scaler-function/function_app.py`) has three functions:
 |---|---|---|
 | `github_webhook` | HTTP | Validates signature, filters to `self-hosted` jobs, enqueues scale request |
 | `scale_worker` | Service Bus | Deduplicates runners per job, computes desired count, creates/deletes ACI |
-| `cleanup_timer` | Timer (1 min) | Removes completed, stale, or over-TTL runners |
+| `cleanup_timer` | Timer (configurable, default 3 min) | Removes completed, stale, or over-TTL runners |
 
 Key behaviours:
 - `maxConcurrentCalls: 1` on the Service Bus trigger prevents duplicate scale operations
