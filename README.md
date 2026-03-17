@@ -24,9 +24,13 @@ Azure Function App (cleanup_timer)  [runs every 3 min]
      │  removes stale / completed runners
 ```
 
-## Usage
+---
 
-As a Terraform module (recommended for external consumers):
+# For module consumers
+
+Everything you need to use this module in your own project.
+
+## Usage
 
 ```hcl
 module "runners" {
@@ -46,21 +50,147 @@ module "runners" {
 }
 ```
 
-See [`examples/basic`](examples/basic) for a complete minimal example, or [`examples/demo`](examples/demo) for a workflow that runs on the self-hosted runners.
+## Getting started
 
-> **Note for module consumers**: The Terraform module provisions all infrastructure. The scaler Function App code (`scaler-function/`) must be deployed separately — see [Deploying the scaler function](#deploying-the-scaler-function) below.
-
-## Adopting this module in your project
-
-If you're consuming this as a Terraform module (not developing the module itself), here's the shortest path:
-
-1. Complete the [prerequisites](#prerequisites) (Terraform, Azure CLI, GitHub App)
-2. Create the Azure service principal with OIDC trust — [step 2](#2-provision-azure-identity-and-permissions)
-3. Follow the [`examples/basic` setup guide](examples/basic/README.md) — it includes ready-to-use Terraform files, a CI/CD workflow, and instructions for GitHub secrets/variables and Terraform state backend
-4. After the first deploy, store your GitHub App secrets in Key Vault — [step 6](#6-store-github-app-secrets-in-key-vault)
-5. Register the webhook in GitHub — [step 7](#7-register-the-webhook-in-github)
+1. Install [Terraform](https://developer.hashicorp.com/terraform/install) >= 1.5 and [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli)
+2. Create a GitHub App — see [Create a GitHub App](#1-create-a-github-app) below
+3. Create the Azure service principal with OIDC trust — see [Provision Azure identity](#2-provision-azure-identity-and-permissions) below
+4. Follow the [`examples/basic` setup guide](examples/basic/README.md) — ready-to-use Terraform files, CI/CD workflow, GitHub secrets/variables config, and Terraform state backend instructions
+5. After the first deploy, [store GitHub App secrets in Key Vault](#6-store-github-app-secrets-in-key-vault)
+6. [Register the webhook in GitHub](#7-register-the-webhook-in-github)
 
 The example workflow handles Terraform apply, ACR image import, and scaler function deployment in a single pipeline. You don't need to copy the Python code into your project.
+
+> The Terraform module provisions all infrastructure. The scaler Function App code (`scaler-function/`) is deployed automatically by the example workflow — see [Deploying the scaler function](#deploying-the-scaler-function) for manual options.
+
+## Variables reference
+
+### Required
+
+| Variable | Description |
+|---|---|
+| `workload` | Short workload identifier (e.g. `runner`) — used to generate all resource names |
+| `environment` | Environment identifier (e.g. `poc`, `dev`, `prod`) |
+| `instance` | Instance identifier for uniqueness (e.g. `bvt`, `001`) |
+| `location` | Azure region (e.g. `westeurope`) |
+| `subscription_id` | Azure subscription ID |
+| `github_org` | GitHub organisation name |
+| `github_repo` | Repository in `org/repo` format |
+| `github_app_id_secret_name` | Key Vault secret name for GitHub App ID |
+| `github_app_installation_id_secret_name` | Key Vault secret name for installation ID |
+| `github_app_private_key_secret_name` | Key Vault secret name for private key PEM |
+
+### Resource name overrides
+
+All resource names are auto-generated from `workload`/`environment`/`instance` using Azure CAF conventions. Override any name by setting the corresponding variable:
+
+| Variable | Default pattern | Example (`runner`/`poc`/`bvt`) |
+|---|---|---|
+| `resource_group_name` | `rg-{w}-{e}-{i}` | `rg-runner-poc-bvt` |
+| `acr_name` | `cr{w}{e}{i}` | `crrunnerpocbvt` |
+| `aci_name` | `ci-{w}-{e}-{i}` | `ci-runner-poc-bvt` |
+| `key_vault_name` | `kv-{w}-{e}-{i}` | `kv-runner-poc-bvt` |
+| `storage_account_name` | `st{w}{e}{i}` | `strunnerpocbvt` |
+| `function_app_name` | `func-{w}-{e}-{i}` | `func-runner-poc-bvt` |
+| `function_storage_account_name` | `stfn{w}{e}{i}` | `stfnrunnerpocbvt` |
+| `servicebus_namespace_name` | `sbns-{w}-{e}-{i}` | `sbns-runner-poc-bvt` |
+
+### Optional
+
+| Variable | Default | Description |
+|---|---|---|
+| `create_resource_group` | `true` | Whether the module creates the resource group |
+| `create_log_analytics_workspace` | `true` | Create a new Log Analytics workspace (set false + provide ID to use existing) |
+| `log_analytics_workspace_id` | `null` | Existing Log Analytics workspace ID |
+| `log_analytics_workspace_name` | `null` | Name for created workspace (auto-derived if omitted) |
+| `log_analytics_retention_days` | `30` | Log Analytics retention (30–730 days) |
+| `subnet_id` | `null` | Subnet ID for VNet integration |
+| `enable_public_network_access` | `true` | Set to `false` for private endpoint environments |
+| `webhook_secret_secret_name` | `null` | Key Vault secret name for webhook HMAC validation |
+| `runner_min_instances` | `0` | Minimum live runners |
+| `runner_max_instances` | `5` | Maximum live runners |
+| `runner_completed_ttl_minutes` | `5` | Minutes to retain a completed runner before deletion |
+| `max_runner_runtime_hours` | `2` | Hard cap on runner lifetime |
+| `cpu` | `2` | CPU cores per runner |
+| `memory` | `4` | Memory (GB) per runner |
+| `runner_labels` | `azure,container-instance,self-hosted` | Comma-separated runner labels |
+| `cleanup_timer_schedule` | `0 */3 * * * *` | NCRONTAB schedule for the cleanup timer function |
+| `runner_workload_roles` | `[]` | Azure roles granted to runner identity at subscription scope |
+| `enable_resource_locks` | `false` | CanNotDelete locks on Key Vault and state storage |
+| `acr_sku` | `Basic` | Container Registry SKU |
+| `storage_account_replication_type` | `LRS` | State storage replication |
+| `github_webhook_ip_ranges` | GitHub webhook CIDRs | GitHub webhook CIDR ranges for IP restriction |
+| `deployment_ip_ranges` | `[]` | Additional CIDRs to allow (e.g. static deploy IPs) |
+| `tags` | `{ManagedBy, Purpose}` | Common resource tags |
+
+## Outputs
+
+| Output | Description |
+|---|---|
+| `resource_group_name` | Resource group name |
+| `function_app_name` | Function App name |
+| `function_app_default_hostname` | Function App hostname (use for webhook URL) |
+| `acr_login_server` | ACR login server URL |
+| `acr_id` | ACR resource ID |
+| `key_vault_uri` | Key Vault URI |
+| `key_vault_id` | Key Vault resource ID |
+| `servicebus_namespace_name` | Service Bus namespace name |
+| `servicebus_queue_name` | Service Bus queue name |
+| `runner_pull_identity` | User-assigned identity (id, client_id, principal_id) for ACR pull |
+| `scaler_identity_principal_id` | System-assigned principal ID for scaler Function App |
+| `log_analytics_workspace_id` | Log Analytics workspace ID used for diagnostics |
+| `application_insights_connection_string` | Application Insights connection string (sensitive) |
+
+## Deploying the scaler function
+
+The Terraform module provisions all Azure infrastructure, but the Python Function App code (`scaler-function/`) must be deployed separately. This is a one-time step after `terraform apply`, plus whenever the scaler code changes.
+
+The easiest approach is to copy the example workflow from [`examples/basic/.github/workflows/deploy-runners.yml`](examples/basic/.github/workflows/deploy-runners.yml) into your repo. It handles everything: Terraform apply, ACR image import, and scaler function deployment. The workflow fetches the scaler function code from this repo at the pinned version tag, so you don't need to copy the Python code into your project.
+
+Alternatively, deploy manually:
+
+```bash
+# 1. Import the runner image into your ACR
+ACR_NAME=$(terraform output -raw acr_login_server | cut -d. -f1)
+az acr import --name "$ACR_NAME" \
+  --source ghcr.io/myoung34/docker-github-actions-runner:latest \
+  --image actions-runner:latest --force
+
+# 2. Deploy the scaler function
+FUNC_APP=$(terraform output -raw function_app_name)
+RG=$(terraform output -raw resource_group_name)
+
+cd scaler-function
+pip install --target=".python_packages/lib/site-packages" -r requirements.txt
+zip -r ../deploy.zip . -x "local.settings*.json" -x "__pycache__/*" -x "*.pyc" -x "DEPLOYMENT.md"
+cd ..
+
+az functionapp deployment source config-zip \
+  --resource-group "$RG" --name "$FUNC_APP" --src deploy.zip --timeout 300
+```
+
+> If the Function App has IP restrictions enabled (default), you may need to temporarily whitelist your IP. See the deploy workflow for an example of how to do this automatically.
+
+## Provisioned resources
+
+| Resource | Name pattern | Example (`poc` / `bvt`) | Purpose |
+|---|---|---|---|
+| Resource group | `rg-{workload}-{env}-{instance}` | `rg-runner-poc-bvt` | Container for all resources |
+| Container Registry | `cr{workload}{env}{instance}` | `crrunnerpocbvt` | Runner image store |
+| Key Vault | `kv-{workload}-{env}-{instance}` | `kv-runner-poc-bvt` | GitHub App credentials |
+| Service Bus namespace | `sbns-{workload}-{env}-{instance}` | `sbns-runner-poc-bvt` | Scale request queue |
+| Function App | `func-{workload}-{env}-{instance}` | `func-runner-poc-bvt` | Control plane |
+| Function storage | `stfn{workload}{env}{instance}` | `stfnrunnerpocbvt` | Functions runtime storage |
+| App Service plan | `asp-{workload}-{env}-{instance}` | `asp-runner-poc-bvt` | Flex Consumption FC1 (Linux) |
+| Application Insights | `appi-{workload}-{env}-{instance}` | `appi-runner-poc-bvt` | Telemetry |
+| Log Analytics | `log-{workload}-{env}-{instance}` | `log-runner-poc-bvt` | Diagnostics & log retention |
+| Managed identity | `id-{workload}-{env}-{instance}` | `id-runner-poc-bvt` | ACI → ACR pull |
+
+---
+
+# For module developers
+
+Everything below is for developing, operating, and maintaining this repository.
 
 ## Project structure
 
@@ -76,34 +206,11 @@ The example workflow handles Terraform apply, ACR image import, and scaler funct
 └── .github/workflows/   # CI/CD pipelines (this repo only)
 ```
 
-**Provisioned resources**
-
-| Resource | Name pattern | Example (`poc` / `bvt`) | Purpose |
-|---|---|---|---|
-| Resource group | `rg-{workload}-{env}-{instance}` | `rg-runner-poc-bvt` | Container for all resources |
-| Container Registry | `cr{workload}{env}{instance}` | `crrunnerpocbvt` | Runner image store |
-| Key Vault | `kv-{workload}-{env}-{instance}` | `kv-runner-poc-bvt` | GitHub App credentials |
-| Service Bus namespace | `sbns-{workload}-{env}-{instance}` | `sbns-runner-poc-bvt` | Scale request queue |
-| Function App | `func-{workload}-{env}-{instance}` | `func-runner-poc-bvt` | Control plane |
-| Function storage | `stfn{workload}{env}{instance}` | `stfnrunnerpocbvt` | Functions runtime storage |
-| App Service plan | `asp-{workload}-{env}-{instance}` | `asp-runner-poc-bvt` | Flex Consumption FC1 (Linux) |
-| Application Insights | `appi-{workload}-{env}-{instance}` | `appi-runner-poc-bvt` | Telemetry |
-| Log Analytics | `log-{workload}-{env}-{instance}` | `log-runner-poc-bvt` | Diagnostics & log retention |
-| Managed identity | `id-{workload}-{env}-{instance}` | `id-runner-poc-bvt` | ACI → ACR pull |
-| State storage | `st{workload}{env}{instance}` (bootstrap) | `strunnerpocbvt` | Terraform remote state |
-| GitHub App | `ghapp-{workload}-{env}-{instance}` | `ghapp-runner-poc-bvt` | Issues runner tokens |
-| Azure service principal | `sp-{workload}-{env}-{instance}` | `sp-runner-poc-bvt` | CI/CD identity (OIDC) |
-
----
-
 ## Prerequisites
 
 - [Terraform](https://developer.hashicorp.com/terraform/install) >= 1.5
 - [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli) (logged in: `az login`)
 - A GitHub App with `Administration: Read and write` + `Actions: Read` repository permissions
-
-
----
 
 ## Fresh deployment — step by step
 
@@ -335,124 +442,6 @@ az functionapp function keys list \
 terraform state rm azurerm_storage_account.storage
 git push
 ```
-
----
-
-## Variables reference
-
-### Required
-
-| Variable | Description |
-|---|---|
-| `workload` | Short workload identifier (e.g. `runner`) — used to generate all resource names |
-| `environment` | Environment identifier (e.g. `poc`, `dev`, `prod`) |
-| `instance` | Instance identifier for uniqueness (e.g. `bvt`, `001`) |
-| `location` | Azure region (e.g. `westeurope`) |
-| `subscription_id` | Azure subscription ID |
-| `github_org` | GitHub organisation name |
-| `github_repo` | Repository in `org/repo` format |
-| `github_app_id_secret_name` | Key Vault secret name for GitHub App ID |
-| `github_app_installation_id_secret_name` | Key Vault secret name for installation ID |
-| `github_app_private_key_secret_name` | Key Vault secret name for private key PEM |
-
-### Resource Name Overrides
-
-All resource names are auto-generated from `workload`/`environment`/`instance` using Azure CAF conventions. Override any name by setting the corresponding variable:
-
-| Variable | Default pattern | Example (`runner`/`poc`/`bvt`) |
-|---|---|---|
-| `resource_group_name` | `rg-{w}-{e}-{i}` | `rg-runner-poc-bvt` |
-| `acr_name` | `cr{w}{e}{i}` | `crrunnerpocbvt` |
-| `aci_name` | `ci-{w}-{e}-{i}` | `ci-runner-poc-bvt` |
-| `key_vault_name` | `kv-{w}-{e}-{i}` | `kv-runner-poc-bvt` |
-| `storage_account_name` | `st{w}{e}{i}` | `strunnerpocbvt` |
-| `function_app_name` | `func-{w}-{e}-{i}` | `func-runner-poc-bvt` |
-| `function_storage_account_name` | `stfn{w}{e}{i}` | `stfnrunnerpocbvt` |
-| `servicebus_namespace_name` | `sbns-{w}-{e}-{i}` | `sbns-runner-poc-bvt` |
-
-### Optional
-
-| Variable | Default | Description |
-|---|---|---|
-| `create_resource_group` | `true` | Whether the module creates the resource group |
-| `create_log_analytics_workspace` | `true` | Create a new Log Analytics workspace (set false + provide ID to use existing) |
-| `log_analytics_workspace_id` | `null` | Existing Log Analytics workspace ID |
-| `log_analytics_workspace_name` | `null` | Name for created workspace (auto-derived if omitted) |
-| `log_analytics_retention_days` | `30` | Log Analytics retention (30–730 days) |
-| `subnet_id` | `null` | Subnet ID for VNet integration |
-| `enable_public_network_access` | `true` | Set to `false` for private endpoint environments |
-| `webhook_secret_secret_name` | `null` | Key Vault secret name for webhook HMAC validation |
-| `runner_min_instances` | `0` | Minimum live runners |
-| `runner_max_instances` | `5` | Maximum live runners |
-| `runner_completed_ttl_minutes` | `5` | Minutes to retain a completed runner before deletion |
-| `max_runner_runtime_hours` | `2` | Hard cap on runner lifetime |
-| `cpu` | `2` | CPU cores per runner |
-| `memory` | `4` | Memory (GB) per runner |
-| `runner_labels` | `azure,container-instance,self-hosted` | Comma-separated runner labels |
-| `cleanup_timer_schedule` | `0 */3 * * * *` | NCRONTAB schedule for the cleanup timer function |
-| `runner_workload_roles` | `[]` | Azure roles granted to runner identity at subscription scope |
-| `enable_resource_locks` | `false` | CanNotDelete locks on Key Vault and state storage |
-| `acr_sku` | `Basic` | Container Registry SKU |
-| `storage_account_replication_type` | `LRS` | State storage replication |
-| `github_webhook_ip_ranges` | GitHub webhook CIDRs | GitHub webhook CIDR ranges for IP restriction |
-| `deployment_ip_ranges` | `[]` | Additional CIDRs to allow (e.g. static deploy IPs) |
-| `tags` | `{ManagedBy, Purpose}` | Common resource tags |
-
----
-
-## Outputs
-
-| Output | Description |
-|---|---|
-| `resource_group_name` | Resource group name |
-| `function_app_name` | Function App name |
-| `function_app_default_hostname` | Function App hostname (use for webhook URL) |
-| `acr_login_server` | ACR login server URL |
-| `acr_id` | ACR resource ID |
-| `key_vault_uri` | Key Vault URI |
-| `key_vault_id` | Key Vault resource ID |
-| `servicebus_namespace_name` | Service Bus namespace name |
-| `servicebus_queue_name` | Service Bus queue name |
-| `runner_pull_identity` | User-assigned identity (id, client_id, principal_id) for ACR pull |
-| `scaler_identity_principal_id` | System-assigned principal ID for scaler Function App |
-| `log_analytics_workspace_id` | Log Analytics workspace ID used for diagnostics |
-| `application_insights_connection_string` | Application Insights connection string (sensitive) |
-
----
-
-## Deploying the scaler function
-
-The Terraform module provisions all Azure infrastructure, but the Python Function App code (`scaler-function/`) must be deployed separately. This is a one-time step after `terraform apply`, plus whenever the scaler code changes.
-
-### For module consumers
-
-The easiest approach is to copy the example workflow from [`examples/basic/.github/workflows/deploy-runners.yml`](examples/basic/.github/workflows/deploy-runners.yml) into your repo. It handles everything: Terraform apply, ACR image import, and scaler function deployment.
-
-The workflow fetches the scaler function code from this repo at the pinned version tag, so you don't need to copy the Python code into your project.
-
-Alternatively, deploy manually:
-
-```bash
-# 1. Import the runner image into your ACR
-ACR_NAME=$(terraform output -raw acr_login_server | cut -d. -f1)
-az acr import --name "$ACR_NAME" \
-  --source ghcr.io/myoung34/docker-github-actions-runner:latest \
-  --image actions-runner:latest --force
-
-# 2. Deploy the scaler function
-FUNC_APP=$(terraform output -raw function_app_name)
-RG=$(terraform output -raw resource_group_name)
-
-cd scaler-function
-pip install --target=".python_packages/lib/site-packages" -r requirements.txt
-zip -r ../deploy.zip . -x "local.settings*.json" -x "__pycache__/*" -x "*.pyc" -x "DEPLOYMENT.md"
-cd ..
-
-az functionapp deployment source config-zip \
-  --resource-group "$RG" --name "$FUNC_APP" --src deploy.zip --timeout 300
-```
-
-> If the Function App has IP restrictions enabled (default), you may need to temporarily whitelist your IP. See the deploy workflow for an example of how to do this automatically.
 
 ---
 
