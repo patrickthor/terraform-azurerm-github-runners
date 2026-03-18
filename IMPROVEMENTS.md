@@ -38,9 +38,9 @@ Verified against official Microsoft documentation and Azure Well-Architected Fra
 
 #### Pin GitHub Actions to commit SHAs
 
-**Current**: Actions pinned to major version tags (`@v4`, `@v2`, `@v3`).
+**Current**: ~~Actions pinned to major version tags (`@v4`, `@v2`, `@v3`).~~ **Done** — all actions pinned to commit SHAs across all workflows.
 
-**Recommended**: Pin to full commit SHA for supply chain security. Add Dependabot for automatic updates.
+**Recommended**: ~~Pin to full commit SHA for supply chain security.~~ Add Dependabot for automatic SHA update PRs.
 
 #### Consider GitHub Environment protection rules
 
