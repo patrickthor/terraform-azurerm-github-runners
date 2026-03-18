@@ -52,13 +52,43 @@ Verified against official Microsoft documentation and Azure Well-Architected Fra
 
 **Current**: `release.yml` runs `npm install -g semantic-release @semantic-release/...` without version pins.
 
-**Recommended**: Pin exact versions or use a lockfile to prevent unexpected breaking changes.
+**Recommended**: Pin exact versions or use a lockfile to prevent unexpected breaking changes. The `release.yml` job has `contents: write`, `issues: write`, and `pull-requests: write` permissions — unpinned packages execute with these privileges.
 
 #### Document broad subscription-level roles in README
 
 **Current**: README step 2 grants `Contributor`, `User Access Administrator`, and `Role Based Access Control Administrator` at subscription scope.
 
 **Recommended**: Add a note about scoping these down for production, or provide a least-privilege alternative using resource group scope where possible.
+
+#### Runner workload roles have no guardrail for overly broad grants
+
+**Current**: `runner_workload_roles` is granted at subscription scope (`/subscriptions/{id}`). A consumer setting `["Contributor"]` gives every ephemeral runner container Contributor on the entire subscription.
+
+**Recommended**: Add a validation rule or documentation warning against broad roles. Consider allowing scope override (e.g. resource group scope instead of subscription).
+
+#### Key Vault network ACL defaults to Allow
+
+**Current**: Key Vault `network_acls { default_action = "Allow" }` when `enable_public_network_access = true` (default). The Key Vault holds GitHub App private key, installation ID, and webhook secret.
+
+**Recommended**: For production, set `default_action = "Deny"` with appropriate bypass rules, or document the tradeoff. The Function App accesses Key Vault via `@Microsoft.KeyVault` references which work through Azure backbone, so a Deny default with `bypass = "AzureServices"` would still work.
+
+#### Function App storage account network open with shared key enabled
+
+**Current**: `azurerm_storage_account.functions` has `network_rules { default_action = "Allow" }` and shared key access is enabled (required for FC1 deployment storage due to [Azure bug](https://github.com/hashicorp/terraform-provider-azurerm/issues/29993)).
+
+**Recommended**: Track the upstream FC1 MSI issue. Once resolved, disable shared key access and tighten network rules. Until then, this is an accepted risk.
+
+#### Webhook secret validation is optional — no warning when disabled
+
+**Current**: `webhook_secret_secret_name` defaults to `null`. When unset, `_verify_github_signature()` returns `True` for any request. Anyone who discovers the Function App URL + function key can inject fake webhook events.
+
+**Recommended**: Log a warning at Function App startup when `WEBHOOK_SECRET` is not configured. Consider making it required or adding a prominent note in the README.
+
+#### Runner image imported from third-party source without digest pinning
+
+**Current**: `az acr import --source ghcr.io/myoung34/docker-github-actions-runner:latest` in deploy workflows. No SHA digest verification. A compromised upstream image is pulled into ACR on every deploy.
+
+**Recommended**: Pin to a specific digest (e.g. `ghcr.io/myoung34/docker-github-actions-runner@sha256:abc...`) or build a custom runner image from a trusted base. ACR Basic SKU does not support content trust.
 
 ### Performance
 
@@ -110,6 +140,7 @@ Verified against official Microsoft documentation and Azure Well-Architected Fra
 - Runner workload roles default changed from `["Contributor"]` to `[]` (least privilege)
 - Hardcoded subscription ID removed from demo
 - Generic error messages in webhook (no exception details exposed)
+- Disable shared key access on consumer state storage account (`--allow-shared-key-access false`)
 
 ### Infrastructure
 - Migrate to FC1 Flex Consumption — `sku_name = "FC1"`, VNet support via `subnet_id`
