@@ -9,14 +9,13 @@ locals {
   # CAF naming: auto-generate all resource names from workload/environment/instance.
   # Every name can be overridden via the corresponding variable.
   # ---------------------------------------------------------------------------
-  name_slug     = "${var.workload}-${var.environment}-${var.instance}"   # e.g. runner-poc-bvt
-  name_compact  = "${var.workload}${var.environment}${var.instance}"     # e.g. runnerpocbvt
+  name_slug    = "${var.workload}-${var.environment}-${var.instance}" # e.g. runner-poc-bvt
+  name_compact = "${var.workload}${var.environment}${var.instance}"   # e.g. runnerpocbvt
 
   resource_group_name           = coalesce(var.resource_group_name, "rg-${local.name_slug}")
   acr_name                      = coalesce(var.acr_name, "cr${local.name_compact}")
   aci_name                      = coalesce(var.aci_name, "ci-${local.name_slug}")
   key_vault_name                = coalesce(var.key_vault_name, "kv-${local.name_slug}")
-  storage_account_name          = coalesce(var.storage_account_name, "st${local.name_compact}")
   function_app_name             = coalesce(var.function_app_name, "func-${local.name_slug}")
   function_storage_account_name = coalesce(var.function_storage_account_name, "stfn${local.name_compact}")
   servicebus_namespace_name     = coalesce(var.servicebus_namespace_name, "sbns-${local.name_slug}")
@@ -52,18 +51,18 @@ locals {
   scaler_base_settings = {
     SERVICEBUS_QUEUE_NAME                          = var.servicebus_queue_name
     SERVICEBUS_NAMESPACE_FQDN                      = "${azurerm_servicebus_namespace.scaler.name}.servicebus.windows.net"
-    SERVICEBUS_CONNECTION__fullyQualifiedNamespace  = "${azurerm_servicebus_namespace.scaler.name}.servicebus.windows.net"
+    SERVICEBUS_CONNECTION__fullyQualifiedNamespace = "${azurerm_servicebus_namespace.scaler.name}.servicebus.windows.net"
 
-    RUNNER_RESOURCE_GROUP         = local.resource_group_name
-    RUNNER_NAME_PREFIX            = local.aci_name
-    RUNNER_IMAGE                  = "${azurerm_container_registry.acr.login_server}/actions-runner:latest"
-    RUNNER_LABELS                 = var.runner_labels
-    RUNNER_CPU                    = tostring(var.cpu)
-    RUNNER_MEMORY                 = tostring(var.memory)
-    RUNNER_MIN_INSTANCES          = tostring(var.runner_min_instances)
-    RUNNER_MAX_INSTANCES          = tostring(var.runner_max_instances)
-    MAX_RUNNER_RUNTIME_HOURS      = tostring(var.max_runner_runtime_hours)
-    RUNNER_COMPLETED_TTL_MINUTES  = tostring(var.runner_completed_ttl_minutes)
+    RUNNER_RESOURCE_GROUP          = local.resource_group_name
+    RUNNER_NAME_PREFIX             = local.aci_name
+    RUNNER_IMAGE                   = "${azurerm_container_registry.acr.login_server}/actions-runner:latest"
+    RUNNER_LABELS                  = var.runner_labels
+    RUNNER_CPU                     = tostring(var.cpu)
+    RUNNER_MEMORY                  = tostring(var.memory)
+    RUNNER_MIN_INSTANCES           = tostring(var.runner_min_instances)
+    RUNNER_MAX_INSTANCES           = tostring(var.runner_max_instances)
+    MAX_RUNNER_RUNTIME_HOURS       = tostring(var.max_runner_runtime_hours)
+    RUNNER_COMPLETED_TTL_MINUTES   = tostring(var.runner_completed_ttl_minutes)
     RUNNER_PULL_IDENTITY_ID        = azurerm_user_assigned_identity.runner_pull.id
     RUNNER_PULL_IDENTITY_CLIENT_ID = azurerm_user_assigned_identity.runner_pull.client_id
     AZURE_SUBSCRIPTION_ID          = data.azurerm_client_config.current.subscription_id
@@ -148,16 +147,6 @@ resource "azurerm_key_vault" "kv" {
   }
 
   tags       = local.default_tags
-  depends_on = [azurerm_resource_group.this]
-}
-
-# State storage is provisioned by the bootstrap module — reference only.
-# Only looked up when enable_resource_locks is true (to apply a CanNotDelete lock).
-data "azurerm_storage_account" "state" {
-  count               = var.enable_resource_locks ? 1 : 0
-  name                = local.storage_account_name
-  resource_group_name = local.resource_group_name
-
   depends_on = [azurerm_resource_group.this]
 }
 
@@ -463,10 +452,10 @@ resource "azurerm_management_lock" "key_vault" {
   notes      = "Protects Key Vault containing GitHub App credentials"
 }
 
-resource "azurerm_management_lock" "state_storage" {
+resource "azurerm_management_lock" "function_storage" {
   count      = var.enable_resource_locks ? 1 : 0
-  name       = "lock-${local.storage_account_name}"
-  scope      = data.azurerm_storage_account.state[0].id
+  name       = "lock-${local.function_storage_account_name}"
+  scope      = azurerm_storage_account.functions.id
   lock_level = "CanNotDelete"
-  notes      = "Protects Terraform state storage account"
+  notes      = "Protects the Function App runtime and deployment storage account"
 }

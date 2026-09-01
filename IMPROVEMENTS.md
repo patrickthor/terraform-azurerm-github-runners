@@ -8,12 +8,6 @@ Verified against official Microsoft documentation and Azure Well-Architected Fra
 
 ### Reliability
 
-#### Deploy workflow has no retry on `terraform apply`
-
-**Current**: The infra job in `deploy.yml` runs `terraform apply` once with no retry.
-
-**Recommended**: Add a retry loop (like the demo workflow) to handle transient Azure WAF 403s and ARM throttling.
-
 #### Pool `ServiceBusClient` in `_servicebus_send`
 
 **Current**: Every webhook call creates a new `ServiceBusClient` + `DefaultAzureCredential`, opening a fresh AMQP connection.
@@ -42,29 +36,17 @@ Verified against official Microsoft documentation and Azure Well-Architected Fra
 
 **Recommended**: ~~Pin to full commit SHA for supply chain security.~~ Add Dependabot for automatic SHA update PRs.
 
-#### Consider GitHub Environment protection rules
-
-**Current**: `terraform apply -auto-approve` runs automatically on push to main.
-
-**Recommended**: For a module used by multiple consumers, consider adding a GitHub Environment with required reviewers for production applies.
-
 #### Pin semantic-release dependencies
 
 **Current**: `release.yml` runs `npm install -g semantic-release @semantic-release/...` without version pins.
 
 **Recommended**: Pin exact versions or use a lockfile to prevent unexpected breaking changes. The `release.yml` job has `contents: write`, `issues: write`, and `pull-requests: write` permissions — unpinned packages execute with these privileges.
 
-#### Document broad subscription-level roles in README
+#### Allow scope override for runner workload roles
 
-**Current**: README step 2 grants `Contributor`, `User Access Administrator`, and `Role Based Access Control Administrator` at subscription scope.
+**Current**: `runner_workload_roles` is granted at subscription scope (`/subscriptions/{id}`). The default is `[]` and the README warns against broad values, but a consumer setting `["Contributor"]` still gives every ephemeral runner container Contributor on the entire subscription.
 
-**Recommended**: Add a note about scoping these down for production, or provide a least-privilege alternative using resource group scope where possible.
-
-#### Runner workload roles have no guardrail for overly broad grants
-
-**Current**: `runner_workload_roles` is granted at subscription scope (`/subscriptions/{id}`). A consumer setting `["Contributor"]` gives every ephemeral runner container Contributor on the entire subscription.
-
-**Recommended**: Add a validation rule or documentation warning against broad roles. Consider allowing scope override (e.g. resource group scope instead of subscription).
+**Recommended**: Add a `runner_workload_role_scope` variable so consumers can target a resource group instead. Consider a validation rule that rejects `Owner` outright.
 
 #### Key Vault network ACL defaults to Allow
 
@@ -86,7 +68,7 @@ Verified against official Microsoft documentation and Azure Well-Architected Fra
 
 #### Runner image imported from third-party source without digest pinning
 
-**Current**: `az acr import --source ghcr.io/myoung34/docker-github-actions-runner:latest` in deploy workflows. No SHA digest verification. A compromised upstream image is pulled into ACR on every deploy.
+**Current**: The documented import step and the reference consumer's workflow both use `az acr import --source ghcr.io/myoung34/docker-github-actions-runner:latest`. No SHA digest verification. A compromised upstream image is pulled into ACR on every deploy.
 
 **Recommended**: Pin to a specific digest (e.g. `ghcr.io/myoung34/docker-github-actions-runner@sha256:abc...`) or build a custom runner image from a trusted base. ACR Basic SKU does not support content trust.
 
@@ -118,20 +100,16 @@ Verified against official Microsoft documentation and Azure Well-Architected Fra
 
 **Recommended**: Verify this is still the recommended range for Azure Functions v4 runtime. Update if a newer bundle is available.
 
-### Code Style
-
-#### Bootstrap `providers.tf` inconsistency
-
-**Current**: `bootstrap/versions.tf` has the provider block inline instead of a separate `providers.tf`.
-
-**Recommended**: Move the provider to `bootstrap/providers.tf` for consistency with the rest of the repo.
-
 ---
 
 ## Completed ✅
 
 ### Architecture & Module Structure
-- Package as Terraform module — resources moved to `modules/runners/`, root is a thin wrapper, `examples/demo/` for demo usage
+- **Reduce the repository to a pure consumption module** — removed the root module (`main.tf`, `variables.tf`, `outputs.tf`, `providers.tf`, `versions.tf` with its backend block, `terraform.tfvars.example`, `backend.hcl.example`), the `bootstrap/` state-storage module, and the `bootstrap.yml` / `deploy.yml` / `demo-storage.yml` workflows. The repo no longer deploys anything; consumers own their state, credentials, and pipeline. Reference consumer: [github-runner-customer-demo](https://github.com/patrickthor/github-runner-customer-demo)
+- **Remove bootstrap coupling from the module** — `data.azurerm_storage_account.state` and `azurerm_management_lock.state_storage` assumed Terraform state lived in the runner resource group as `st{workload}{env}{instance}`. That is false for any consumer, so `enable_resource_locks = true` would have failed on lookup. Replaced with a lock on the module-owned Function App storage account; dropped the orphaned `storage_account_name` variable
+- **Collapse examples** — `examples/demo/` removed (it lives in the consumer repo as `storage-demo`); `examples/basic/` reduced to a literal-value module call with no backend, no variable indirection, and no duplicated workflow
+- **Replace deploy CI with `validate.yml`** — `terraform fmt -check`, module `validate`, and a Python compile/import check, with no Azure credentials
+- Package as Terraform module — resources moved to `modules/runners/`
 - Simplify variable surface — 3 core variables (`workload`, `environment`, `instance`) generate all resource names via Azure CAF conventions, with override support
 - Configurable resource group creation via `create_resource_group`
 - Remove stale `moved` blocks — 25 migration blocks removed after state migration completed

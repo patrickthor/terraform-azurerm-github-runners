@@ -12,18 +12,13 @@ updates:
     schedule:
       interval: "weekly"
 
-  # Terraform providers
-  - package-ecosystem: "terraform"
-    directory: "/"
-    schedule:
-      interval: "monthly"
-
+  # Terraform providers — the published module
   - package-ecosystem: "terraform"
     directory: "/modules/runners"
     schedule:
       interval: "monthly"
 
   - package-ecosystem: "terraform"
-    directory: "/bootstrap"
+    directory: "/examples/basic"
     schedule:
       interval: "monthly"

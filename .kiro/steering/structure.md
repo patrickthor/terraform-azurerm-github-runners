@@ -4,110 +4,86 @@ inclusion: auto
 
 # Project Structure
 
-## Root Module (Main Infrastructure)
-
-The root directory contains the primary Terraform module that provisions all runtime resources.
+This repository publishes a Terraform module. It deploys nothing itself: there is no root module, no backend configuration, and no environment-specific values. Consumers compose the module from their own repository and own their state, credentials, and pipeline.
 
 ```
-main.tf           # Core resources: ACR, Key Vault, Service Bus, Function App, identities
-variables.tf      # Input variable definitions with validation rules
-outputs.tf        # Exported values (function hostname, ACR server, etc.)
-providers.tf      # Azure provider configuration
-versions.tf       # Terraform version constraints + azurerm backend config
-terraform.tfvars.example  # Template for variable values
-backend.hcl.example       # Template for backend configuration
+modules/runners/      # The module — every Azure resource lives here
+scaler-function/      # Python Function App code (the control plane)
+examples/basic/       # Minimal module call, local state, literal values
+.github/workflows/    # validate.yml (fmt + validate), release.yml (semantic-release)
 ```
 
-## Bootstrap Module
+The reference consumer is [patrickthor/github-runner-customer-demo](https://github.com/patrickthor/github-runner-customer-demo). It owns the remote state, the OIDC identity, and the deploy pipeline.
 
-One-time setup for Terraform remote state storage. Uses local state by design.
+## The module
 
 ```
-bootstrap/
-  main.tf                    # Storage account + blob container provisioning
-  variables.tf               # Bootstrap-specific variables
-  outputs.tf                 # State storage details
-  versions.tf                # No backend (local state)
-  terraform.tfvars.example   # Bootstrap variable template
+modules/runners/
+  main.tf        # ACR, Key Vault, Service Bus, Function App, identities, RBAC, diagnostics, locks
+  variables.tf   # Inputs with validation rules
+  outputs.tf     # Exported values (function hostname, ACR server, Key Vault URI, etc.)
+  versions.tf    # Terraform + azurerm version constraints only
 ```
 
-## Function App Code
+Rules for this directory:
+- No `provider` block and no `backend` block. Both belong to the consumer's root module.
+- No `subscription_id` input. Read it from `data.azurerm_client_config.current`.
+- Every resource the module locks or references must be a resource the module owns. Do not add data sources that assume resources exist outside the module's own scope.
+- New inputs need a validation rule where a constraint exists, and a row in the README table.
+- Breaking input or output changes require a major version bump via a `feat!:` or `BREAKING CHANGE:` commit.
 
-Python Azure Functions that implement the control plane.
+## Function App code
 
 ```
 scaler-function/
-  function_app.py            # Three functions: webhook, worker, timer
-  requirements.txt           # Python dependencies
-  host.json                  # Functions runtime configuration
-  local.settings.example.json  # Local development settings template
-  DEPLOYMENT.md              # Deployment instructions
-  .python_packages/          # Local development cache
+  function_app.py              # Three functions: webhook, worker, timer
+  requirements.txt             # Python dependencies
+  host.json                    # Functions runtime configuration
+  local.settings.example.json  # Local development template
+  DEPLOYMENT.md                # Deployment instructions
 ```
 
-### Function Responsibilities
+Deployed separately from Terraform. Consumers fetch this directory from a release tag tarball rather than vendoring it. Any new app setting read here must be added to `local.scaler_base_settings` in the module, and any setting removed there must be removed here.
 
-- `github_webhook`: Validates GitHub signatures, filters self-hosted jobs, enqueues to Service Bus
-- `scale_worker`: Deduplicates runners, computes desired count, creates/deletes ACI
-- `cleanup_timer`: Removes stale/completed runners every 5 minutes
+### Function responsibilities
 
-## Demo Environment
+- `github_webhook`: validates GitHub signatures, filters to self-hosted jobs, enqueues to Service Bus
+- `scale_worker`: deduplicates per `workflow_job_id`, computes desired count, creates/deletes ACI
+- `cleanup_timer`: removes completed, stale, or over-TTL runners on the configured schedule
 
-Example configuration for testing the module.
+## Examples
 
-```
-demo/
-  main.tf           # Module invocation example
-  providers.tf      # Provider configuration
-  variables.tf      # Demo-specific variables
-  outputs.tf        # Pass-through outputs
-  versions.tf       # Version constraints + backend
-  terraform.tfvars  # Demo values (may contain sensitive data)
-```
+`examples/basic/` is documentation, not a deployment. Local state, literal values, no workflow. It pins the module to a published tag, so CI format-checks it but does not `init` it — that would validate the released module rather than the working tree.
 
-## CI/CD Workflows
+Full CI/CD patterns belong in the consumer repository, not here. Do not reintroduce a workflow under `examples/`.
 
-```
-.github/workflows/
-  bootstrap.yml     # Stage 1: Provision state storage
-  deploy.yml        # Stage 2: Terraform apply + Stage 3: Function publish
-  release.yml       # Semantic versioning + GitHub Release
-```
+## Key design patterns
 
-## Key Design Patterns
+### Naming
 
-### State Management
+All names derive from `workload`/`environment`/`instance` via Azure CAF conventions, each overridable by a variable:
 
-- Bootstrap module uses local state (one-time setup)
-- Main module uses azurerm backend (remote state in Azure Storage)
-- Backend config supplied via `-backend-config=backend.hcl` at init time
+- Resource groups: `rg-{workload}-{env}-{instance}`
+- Storage accounts: `stfn{workload}{env}{instance}` (alphanumeric only)
+- Container registries: `cr{workload}{env}{instance}` (alphanumeric only)
+- Key Vaults: `kv-{workload}-{env}-{instance}`
+- Function Apps: `func-{workload}-{env}-{instance}`
+- Service Bus: `sbns-{workload}-{env}-{instance}`
+- ACI runners: `ci-{workload}-{env}-{instance}-{hash}` (created at runtime by the scaler)
 
-### Resource Ownership
+### Security model
 
-- Bootstrap owns: state storage account
-- Main module owns: all runtime resources (ACR, Function App, Service Bus, etc.)
-- Main module references (data source): state storage account
-
-### Naming Strategy
-
-- All resource names derived from input variables
-- Consistent prefixes/patterns for resource type identification
-- Alphanumeric-only names for globally unique resources (ACR, Storage)
-- Hyphenated names for other resources (Key Vault, Function App)
-
-### Security Model
-
-- No shared access keys (Key Vault, Storage)
-- RBAC for all access control
-- Managed identities for Azure resource authentication
-- GitHub App (not PAT) for GitHub API access
+- RBAC everywhere; no shared access keys except where FC1 deployment storage still requires them
+- Managed identities for all Azure resource authentication
+- GitHub App rather than PAT for GitHub API access
 - Key Vault references for Function App secrets
-- OIDC federation for CI/CD (no secrets in GitHub)
+- OIDC federation for consumer CI/CD
+- `runner_workload_roles` defaults to `[]`. It grants at subscription scope, so a broad value gives every ephemeral container that scope.
+- `webhook_secret_secret_name` defaults to `null`, which disables signature validation entirely
 
-### Scale Logic
+### Scale logic
 
-- Scale formula: `max(scale_hint, queue_backlog)` — never sums
-- Deduplication: one runner per workflow_job_id
-- Non-terminal state check: terminated containers don't count as active
-- Capacity handling: defer jobs when at max_instances
-- Quota handling: defer jobs when ACI quota exhausted
+- Scale formula: `max(scale_hint, queue_backlog)` — never a sum
+- Deduplication: one runner per `workflow_job_id`
+- Terminated containers are not counted as active
+- At capacity or out of ACI quota: defer and retry rather than fail

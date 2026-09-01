@@ -6,6 +6,8 @@ inclusion: auto
 
 Event-driven ephemeral GitHub Actions runner platform on Azure. Automatically scales Azure Container Instance (ACI) runners in response to GitHub webhook events.
 
+This repository is the reusable module only — it provisions nothing on its own. Consumers call `modules/runners` from their own repository and deploy `scaler-function/` to the Function App it creates.
+
 ## Core Functionality
 
 - Receives GitHub workflow_job webhooks via Azure Function App
@@ -19,7 +21,7 @@ Event-driven ephemeral GitHub Actions runner platform on Azure. Automatically sc
 - Azure Function App (Python 3.11) with three functions:
   - `github_webhook`: HTTP trigger for GitHub events
   - `scale_worker`: Service Bus trigger for runner provisioning
-  - `cleanup_timer`: Timer trigger (every 5 min) for stale runner removal
+  - `cleanup_timer`: Timer trigger (configurable, default every 3 min) for stale runner removal
 - Azure Container Registry (ACR) for runner images
 - Azure Container Instances (ACI) for ephemeral runners
 - Service Bus queue for scale request buffering

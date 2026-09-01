@@ -106,16 +106,6 @@ variable "key_vault_name" {
   }
 }
 
-variable "storage_account_name" {
-  description = "Override: storage account name used for resource locks (only relevant when enable_resource_locks = true). Default: st{workload}{environment}{instance}"
-  type        = string
-  default     = null
-  validation {
-    condition     = var.storage_account_name == null || can(regex("^[a-z0-9]{3,24}$", var.storage_account_name))
-    error_message = "Storage account name must be 3-24 lowercase alphanumeric characters."
-  }
-}
-
 variable "function_app_name" {
   description = "Override: Function App name (globally unique). Default: func-{workload}-{environment}-{instance}"
   type        = string

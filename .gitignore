@@ -3,6 +3,7 @@
 
 # Terraform local artifacts
 .terraform/
+.terraform.lock.hcl
 *.tfstate
 *.tfstate.*
 *.tfplan
@@ -10,13 +11,10 @@ tfplan
 crash.log
 crash.*.log
 
-# Sensitive / environment-specific Terraform config (use *.example counterparts)
+# Local variable / backend overrides (never commit environment-specific values)
 terraform.tfvars
+*.auto.tfvars
 backend.hcl
-
-# Environment files
-*.tfvars.local
-*.auto.tfvars.local
 
 # Python cache
 __pycache__/
