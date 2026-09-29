@@ -8,6 +8,12 @@ Verified against official Microsoft documentation and Azure Well-Architected Fra
 
 ### Reliability
 
+#### Confirm the Service Bus provider floor against a clean namespace
+
+**Current**: The module floor was raised to `azurerm >= 5.6.0` because 5.6.0 moved Service Bus to control-plane API `2026-01-01`. On 5.4.0 (API `2024-01-01`) a Basic namespace was observed provisioning into a `Failed` state, after which every retry returned `CreateNamespacePayloadDiffersFromExistingNamespaceInFailedState`. The module validates against 5.7.0, but the fix has not yet been confirmed by a successful apply from a clean state.
+
+**Recommended**: Apply against a fresh namespace name (or after deleting the failed one) and confirm `provisioningState = Succeeded`, `status = Active`, SKU still `Basic`, `disableLocalAuth = true`, and that the queue is created. Until then, treat the provider version as the working diagnosis rather than a proven fix.
+
 #### Pool `ServiceBusClient` in `_servicebus_send`
 
 **Current**: Every webhook call creates a new `ServiceBusClient` + `DefaultAzureCredential`, opening a fresh AMQP connection.
@@ -105,6 +111,7 @@ Verified against official Microsoft documentation and Azure Well-Architected Fra
 ## Completed ✅
 
 ### Architecture & Module Structure
+- **Raise the azurerm floor to `>= 5.6.0`** — first release carrying Service Bus control-plane API `2026-01-01`, which addresses Basic namespaces provisioning into a `Failed` state on earlier 5.x builds. No upper bound in the module; `examples/basic` pins `~> 5.7.0` as a root module should. Rejected two non-fixes: `zone_redundant` on the namespace (automatic in Azure, absent from the resource schema) and switching to Premium. This raises the module's minimum major provider version, so it is a breaking change for consumers still on azurerm 4.x
 - **Reduce the repository to a pure consumption module** — removed the root module (`main.tf`, `variables.tf`, `outputs.tf`, `providers.tf`, `versions.tf` with its backend block, `terraform.tfvars.example`, `backend.hcl.example`), the `bootstrap/` state-storage module, and the `bootstrap.yml` / `deploy.yml` / `demo-storage.yml` workflows. The repo no longer deploys anything; consumers own their state, credentials, and pipeline. Reference consumer: [github-runner-customer-demo](https://github.com/patrickthor/github-runner-customer-demo)
 - **Remove bootstrap coupling from the module** — `data.azurerm_storage_account.state` and `azurerm_management_lock.state_storage` assumed Terraform state lived in the runner resource group as `st{workload}{env}{instance}`. That is false for any consumer, so `enable_resource_locks = true` would have failed on lookup. Replaced with a lock on the module-owned Function App storage account; dropped the orphaned `storage_account_name` variable
 - **Collapse examples** — `examples/demo/` removed (it lives in the consumer repo as `storage-demo`); `examples/basic/` reduced to a literal-value module call with no backend, no variable indirection, and no duplicated workflow

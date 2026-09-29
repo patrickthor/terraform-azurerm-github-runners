@@ -66,11 +66,17 @@ Always pin `ref` to a tag. `main` is not a stable interface.
 | | |
 |---|---|
 | Terraform | >= 1.5 |
-| azurerm provider | >= 4.63 |
+| azurerm provider | >= 5.6.0 — see the note below |
 | Azure CLI | for the post-apply steps |
 | GitHub App | `Administration: Read and write` + `Actions: Read` on the target repo |
 
 The module declares no `provider` block and no `backend`. Configure both in your root module. `subscription_id` is not a module input — the module reads it from `data.azurerm_client_config.current`.
+
+> **The azurerm floor of `5.6.0` is deliberate — don't lower it.** [azurerm 5.6.0](https://github.com/hashicorp/terraform-provider-azurerm/releases/tag/v5.6.0) moved the Service Bus resources to control-plane API `2026-01-01`. On earlier 5.x builds, which use `2024-01-01`, creating the Basic namespace can land in a `Failed` provisioning state. Azure then populates server-side properties on the failed resource that no longer match the create payload, so every retry fails with `CreateNamespacePayloadDiffersFromExistingNamespaceInFailedState` and the deployment cannot self-heal — the namespace has to be deleted before Terraform can make progress.
+>
+> The module sets no upper bound. Pin the exact 5.x patch line in your own root module, as [`examples/basic`](examples/basic/versions.tf) does.
+
+If you hit that failed-namespace state, deleting the namespace is the only way forward; a repeated `apply` with a different payload cannot repair it. Two things that look like fixes but are not: adding `zone_redundant` to the namespace (Azure [enables zone redundancy automatically](https://learn.microsoft.com/azure/reliability/reliability-service-bus#resilience-to-availability-zone-failures) for Basic, Standard, and Premium, and the property is not in the resource schema), and moving to Premium because the failed resource reports `zoneRedundant: true`. Neither addresses the API version mismatch.
 
 ### Setup order
 

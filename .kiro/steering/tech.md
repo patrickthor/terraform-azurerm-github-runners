@@ -7,7 +7,11 @@ inclusion: auto
 ## Infrastructure as Code
 
 - Terraform >= 1.5
-- AzureRM provider >= 4.63
+- AzureRM provider >= 5.6.0 — the floor is deliberate. 5.6.0 moved Service Bus to
+  control-plane API `2026-01-01`; earlier 5.x builds (2024-01-01) can leave a Basic
+  namespace `Failed`, after which retries return
+  `CreateNamespacePayloadDiffersFromExistingNamespaceInFailedState`. Do not lower it,
+  and do not "fix" that failure by adding `zone_redundant` or moving to Premium.
 - No backend in this repository — consumers configure their own remote state
 
 ## Azure Services
