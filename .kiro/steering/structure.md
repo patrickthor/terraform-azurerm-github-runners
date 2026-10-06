@@ -9,9 +9,14 @@ This repository publishes a Terraform module. It deploys nothing itself: there i
 ```
 modules/runners/      # The module — every Azure resource lives here
 scaler-function/      # Python Function App code (the control plane)
+runner-image/         # Dockerfile for the ephemeral ACI runner
 examples/basic/       # Minimal module call, local state, literal values
 .github/workflows/    # validate.yml (fmt + validate), release.yml (semantic-release)
 ```
+
+A release identifies three things that must move together: the Terraform module, the scaler code, and the runner image. The module owns the Dockerfile and every tool version in it; consumers own only the ACR they build it into. Do not let the image version float independently of the module.
+
+The image inherits `ENTRYPOINT`/`CMD` from upstream and must keep doing so — the ephemeral registration flow and the `REPO_URL`/`RUNNER_NAME`/`LABELS`/`EPHEMERAL`/`RUNNER_TOKEN` contract the scaler depends on all live in that entrypoint. Adding packages is safe; overriding the entrypoint is not.
 
 The reference consumer is [patrickthor/github-runner-customer-demo](https://github.com/patrickthor/github-runner-customer-demo). It owns the remote state, the OIDC identity, and the deploy pipeline.
 

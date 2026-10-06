@@ -1,0 +1,325 @@
+digraph github_runners_architecture {
+	graph [bb="0,0,1577.8,1213.6",
+		compound=true,
+		fontcolor="#2D3436",
+		fontname="Sans-Serif",
+		fontsize=15,
+		label="GitHub Runners on Azure",
+		labelloc=b,
+		lheight=0.22,
+		lp="788.88,11.875",
+		lwidth=2.38,
+		nodesep=0.6,
+		pad=0.7,
+		rankdir=LR,
+		ranksep=1.4,
+		splines=spline
+	];
+	node [fixedsize=true,
+		fontcolor="#2D3436",
+		fontname="Sans-Serif",
+		fontsize=13,
+		height=1.4,
+		imagescale=true,
+		label="\N",
+		labelloc=b,
+		shape=box,
+		style=rounded,
+		width=1.4
+	];
+	edge [color="#7B8894"];
+	subgraph cluster_GitHub {
+		graph [bb="8,193.64,359.1,424.64",
+			bgcolor="#E5F5FD",
+			fontname="Sans-Serif",
+			fontsize=12,
+			label=GitHub,
+			labeljust=l,
+			lheight=0.18,
+			lp="34.75,204.01",
+			lwidth=0.52,
+			pencolor="#AEB6BE",
+			rankdir=LR,
+			shape=box,
+			style=rounded
+		];
+		"70d51c0091ca4512bbeeb52f7552b123"	[height=2.3,
+			image="/Users/patrick.thor/.local/share/uv/tools/infrastructure-diagram-mcp-server/lib/python3.12/site-packages/resources/onprem/vcs/github.png",
+			label="Workflow job
+runs-on: self-hosted",
+			pos="66.4,312.64",
+			shape=none];
+		"7e0cca5281e84f3e98b190c0e41017eb"	[height=2.7,
+			image="/Users/patrick.thor/.local/share/uv/tools/infrastructure-diagram-mcp-server/lib/python3.12/site-packages/resources/onprem/vcs/github.png",
+			label="workflow_job webhook
+POST /webhook/github
+signed: X-Hub-Signature-256",
+			pos="300.7,319.64",
+			shape=none];
+		"70d51c0091ca4512bbeeb52f7552b123" -> "7e0cca5281e84f3e98b190c0e41017eb"	[dir=forward,
+			fontcolor="#2D3436",
+			fontname="Sans-Serif",
+			fontsize=13,
+			label=emits,
+			lp="183.55,323.31",
+			pos="e,250.51,318.16 116.66,314.12 152.39,315.2 200.92,316.66 239.04,317.81"];
+	}
+	subgraph "cluster_Resource Group: rg-runner-<env>" {
+		graph [bb="543.85,79.638,1569.8,1205.6",
+			bgcolor="#E5F5FD",
+			fontname="Sans-Serif",
+			fontsize=12,
+			label="Resource Group: rg-runner-<env>",
+			labeljust=l,
+			lheight=0.18,
+			lp="641.48,90.013",
+			lwidth=2.49,
+			pencolor="#AEB6BE",
+			rankdir=LR,
+			shape=box,
+			style=rounded
+		];
+		subgraph "cluster_Scaler control plane" {
+			graph [bb="551.85,108.64,1074.9,916.64",
+				bgcolor="#EBF3E7",
+				fontname="Sans-Serif",
+				fontsize=12,
+				label="Scaler control plane",
+				labeljust=l,
+				lheight=0.18,
+				lp="613.1,119.01",
+				lwidth=1.48,
+				pencolor="#AEB6BE",
+				rankdir=LR,
+				shape=box,
+				style=rounded
+			];
+			subgraph "cluster_Function App (Flex Consumption)" {
+				graph [bb="559.85,287.64,754.35,908.64",
+					bgcolor="#ECE8F6",
+					fontname="Sans-Serif",
+					fontsize=12,
+					label="Function App (Flex Consumption)",
+					labeljust=l,
+					lheight=0.18,
+					lp="657.1,298.01",
+					lwidth=2.48,
+					pencolor="#AEB6BE",
+					rankdir=LR,
+					shape=box,
+					style=rounded
+				];
+				"5fe005709c684f4b90b25fe07734511d"	[height=2.3,
+					image="/Users/patrick.thor/.local/share/uv/tools/infrastructure-diagram-mcp-server/lib/python3.12/site-packages/resources/azure/iot/function-apps.png",
+					label="github_webhook
+HTTP trigger",
+					pos="656.6,399.64",
+					shape=none];
+				f838cce7a5fc4b5abcf95b8f996ca8da	[height=2.3,
+					image="/Users/patrick.thor/.local/share/uv/tools/infrastructure-diagram-mcp-server/lib/python3.12/site-packages/resources/azure/iot/function-apps.png",
+					label="scale_worker
+Service Bus trigger",
+					pos="656.6,608.64",
+					shape=none];
+				f5d3924c9fb9423aa2038842bf1069a6	[height=2.3,
+					image="/Users/patrick.thor/.local/share/uv/tools/infrastructure-diagram-mcp-server/lib/python3.12/site-packages/resources/azure/iot/function-apps.png",
+					label="cleanup_timer
+Timer trigger",
+					pos="656.6,817.64",
+					shape=none];
+			}
+			subgraph "cluster_Shared support" {
+				graph [bb="950.1,317.64,1066.9,908.64",
+					bgcolor="#ECE8F6",
+					fontname="Sans-Serif",
+					fontsize=12,
+					label="Shared support",
+					labeljust=l,
+					lheight=0.18,
+					lp="998.98,328.01",
+					lwidth=1.14,
+					pencolor="#AEB6BE",
+					rankdir=LR,
+					shape=box,
+					style=rounded
+				];
+				"58750fad7ea3455190835ab667f180dd"	[height=2.3,
+					image="/Users/patrick.thor/.local/share/uv/tools/infrastructure-diagram-mcp-server/lib/python3.12/site-packages/resources/azure/security/\
+key-vaults.png",
+					label="Key Vault
+GitHub App creds",
+					pos="1008.5,429.64",
+					shape=none];
+				"52c7d19e00a244b082dc2dd775813963"	[height=2.3,
+					image="/Users/patrick.thor/.local/share/uv/tools/infrastructure-diagram-mcp-server/lib/python3.12/site-packages/resources/azure/storage/\
+storage-accounts.png",
+					label="Function Storage
+host state + deploy",
+					pos="1008.5,817.64",
+					shape=none];
+				"0f4fd3f59fff454daf9f979a10e88284"	[height=1.9,
+					image="/Users/patrick.thor/.local/share/uv/tools/infrastructure-diagram-mcp-server/lib/python3.12/site-packages/resources/azure/devops/\
+application-insights.png",
+					label="App Insights",
+					pos="1008.5,623.64",
+					shape=none];
+			}
+			a94fcece98f04e7fbbce0f98d7a2d73c	[height=2.3,
+				image="/Users/patrick.thor/.local/share/uv/tools/infrastructure-diagram-mcp-server/lib/python3.12/site-packages/resources/azure/integration/\
+service-bus.png",
+				label="Service Bus
+scale-requests queue",
+				pos="1008.5,220.64",
+				shape=none];
+			"5fe005709c684f4b90b25fe07734511d" -> a94fcece98f04e7fbbce0f98d7a2d73c	[dir=forward,
+				fontcolor="#2D3436",
+				fontname="Sans-Serif",
+				fontsize=13,
+				label=enqueue,
+				lp="860.23,322.25",
+				pos="e,958.36,245.78 706.99,374.37 770.42,341.92 880.39,285.66 948.25,250.95"];
+			"5fe005709c684f4b90b25fe07734511d" -> "58750fad7ea3455190835ab667f180dd"	[dir=forward,
+				fontcolor="#2D3436",
+				fontname="Sans-Serif",
+				fontsize=13,
+				label=secrets,
+				lp="860.23,417.89",
+				pos="e,958.17,419.17 706.99,399.94 757.44,400.7 837.96,403.21 907.1,411.14 920.04,412.62 933.82,414.78 946.9,417.1",
+				style=dotted];
+			a94fcece98f04e7fbbce0f98d7a2d73c -> f838cce7a5fc4b5abcf95b8f996ca8da	[dir=forward,
+				fontcolor="#2D3436",
+				fontname="Sans-Serif",
+				fontsize=13,
+				label=trigger,
+				lp="860.23,526.64",
+				pos="e,706.89,586.24 958.13,292.44 955.27,297.5 952.56,302.6 950.1,307.64 923.92,361.17 942.89,386.99 907.1,434.64 856.94,501.42 773.53,\
+552.1 717.1,581.08"];
+			f838cce7a5fc4b5abcf95b8f996ca8da -> "52c7d19e00a244b082dc2dd775813963"	[dir=forward,
+				fontcolor="#2D3436",
+				fontname="Sans-Serif",
+				fontsize=13,
+				label=state,
+				lp="860.23,759.89",
+				pos="e,958.25,785.36 706.76,636.22 757.36,664.82 838.31,711.15 907.1,753.14 920.75,761.47 935.3,770.64 948.96,779.39",
+				style=dotted];
+			f838cce7a5fc4b5abcf95b8f996ca8da -> "0f4fd3f59fff454daf9f979a10e88284"	[dir=forward,
+				fontcolor="#2D3436",
+				fontname="Sans-Serif",
+				fontsize=13,
+				label=telemetry,
+				lp="860.23,625.96",
+				pos="e,958.36,621.53 706.99,610.75 770.03,613.46 879.04,618.13 947,621.04",
+				style=dotted];
+		}
+		subgraph "cluster_Runner pool" {
+			graph [bb="950.1,924.64,1561.8,1197.6",
+				bgcolor="#EBF3E7",
+				fontname="Sans-Serif",
+				fontsize=12,
+				label="Runner pool",
+				labeljust=l,
+				lheight=0.18,
+				lp="991.1,935.01",
+				lwidth=0.92,
+				pencolor="#AEB6BE",
+				rankdir=LR,
+				shape=box,
+				style=rounded
+			];
+			"20c95f8744eb42b4b8de203cbbd98afe"	[height=2.3,
+				image="/Users/patrick.thor/.local/share/uv/tools/infrastructure-diagram-mcp-server/lib/python3.12/site-packages/resources/azure/compute/\
+container-instances.png",
+				label="ACI Runner
+ephemeral, per-job",
+				pos="1008.5,1036.6",
+				shape=none];
+			cc018af736e24330bbe7bbf7511636a3	[height=1.9,
+				image="/Users/patrick.thor/.local/share/uv/tools/infrastructure-diagram-mcp-server/lib/python3.12/site-packages/resources/azure/identity/\
+managed-identities.png",
+				label="runner-pull UAI",
+				pos="1257.8,1121.6",
+				shape=none];
+			"20c95f8744eb42b4b8de203cbbd98afe" -> cc018af736e24330bbe7bbf7511636a3	[dir=forward,
+				fontcolor="#2D3436",
+				fontname="Sans-Serif",
+				fontsize=13,
+				label=assume,
+				lp="1133.2,1093.5",
+				pos="e,1207.7,1104.8 1058.7,1053.5 1098.4,1067.2 1154.6,1086.5 1197,1101.1",
+				style=dotted];
+			"64fe00757206407d9af488f2c99ef575"	[height=2.3,
+				image="/Users/patrick.thor/.local/share/uv/tools/infrastructure-diagram-mcp-server/lib/python3.12/site-packages/resources/azure/compute/\
+container-registries.png",
+				label="ACR
+runner image",
+				pos="1503.4,1056.6",
+				shape=none];
+			"20c95f8744eb42b4b8de203cbbd98afe" -> "64fe00757206407d9af488f2c99ef575"	[dir=forward,
+				fontcolor="#2D3436",
+				fontname="Sans-Serif",
+				fontsize=13,
+				label="pull image",
+				lp="1257.8,1024.9",
+				pos="e,1453.3,1044.1 1058.7,1028.8 1118,1020.4 1220.6,1009.5 1308.2,1018.1 1353.6,1022.6 1404.2,1032.8 1442.4,1041.6"];
+			cc018af736e24330bbe7bbf7511636a3 -> "64fe00757206407d9af488f2c99ef575"	[dir=forward,
+				fontcolor="#2D3436",
+				fontname="Sans-Serif",
+				fontsize=13,
+				label=AcrPull,
+				lp="1380.6,1099.8",
+				pos="e,1453.1,1069.8 1308.1,1108.5 1346.8,1098.2 1400.9,1083.7 1442.1,1072.7",
+				style=dotted];
+		}
+		f838cce7a5fc4b5abcf95b8f996ca8da -> "20c95f8744eb42b4b8de203cbbd98afe"	[color=blue,
+			dir=forward,
+			fontcolor="#2D3436",
+			fontname="Sans-Serif",
+			fontsize=13,
+			label="create ACI",
+			lp="860.23,903.89",
+			pos="e,958.15,966.03 706.85,661.04 722.24,677.7 739.16,696.3 754.35,713.64 824.27,793.46 842.12,813.24 907.1,897.14 921.85,916.18 937.28,\
+937.08 951.49,956.78"];
+		"827779acb8da489883160b65497bc90d"	[height=3.1,
+			image="/Users/patrick.thor/.local/share/uv/tools/infrastructure-diagram-mcp-server/lib/python3.12/site-packages/resources/azure/analytics/\
+log-analytics-workspaces.png",
+			label="Log Analytics
+(diagnostics sink for
+Key Vault, Service Bus,
+Function App, App Insights)",
+			pos="1257.8,623.64",
+			shape=none];
+		"0f4fd3f59fff454daf9f979a10e88284" -> "827779acb8da489883160b65497bc90d"	[dir=forward,
+			fontcolor="#2D3436",
+			fontname="Sans-Serif",
+			fontsize=13,
+			pos="e,1207.7,623.64 1058.7,623.64 1098.3,623.64 1154.1,623.64 1196.5,623.64",
+			style=dotted];
+		f5d3924c9fb9423aa2038842bf1069a6 -> "20c95f8744eb42b4b8de203cbbd98afe"	[color=blue,
+			dir=forward,
+			fontcolor="#2D3436",
+			fontname="Sans-Serif",
+			fontsize=13,
+			label="delete stale ACI",
+			lp="860.23,978.68",
+			pos="e,958.36,1005.9 706.99,848.55 770.55,888.33 880.84,957.36 948.67,999.82",
+			style=dashed];
+	}
+	"7e0cca5281e84f3e98b190c0e41017eb" -> "5fe005709c684f4b90b25fe07734511d"	[color=darkgreen,
+		dir=forward,
+		fontcolor="#2D3436",
+		fontname="Sans-Serif",
+		fontsize=13,
+		label="workflow_job event",
+		lp="459.48,373.55",
+		pos="e,606.24,388.48 350.91,330.76 414.78,345.2 526.19,370.38 595.14,385.97"];
+	"20c95f8744eb42b4b8de203cbbd98afe" -> "70d51c0091ca4512bbeeb52f7552b123"	[color=darkgreen,
+		dir=forward,
+		fontcolor="#2D3436",
+		fontname="Sans-Serif",
+		fontsize=13,
+		label="register runner",
+		lp="459.48,104.61",
+		pos="e,116.57,274.07 962.29,954.1 957.43,942.46 953.15,930.44 950.1,918.64 927.45,830.94 972.81,166.97 907.1,104.64 682.84,-108.09 276.42,\
+155.68 125.7,267.27",
+		style=bold];
+}

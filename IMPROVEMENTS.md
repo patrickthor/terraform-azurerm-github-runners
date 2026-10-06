@@ -6,6 +6,32 @@ Verified against official Microsoft documentation and Azure Well-Architected Fra
 
 ## Remaining Improvements
 
+### Runner image
+
+#### Base OS and Azure CLI are both out of support
+
+**Current**: `runner-image/Dockerfile` pins `ghcr.io/myoung34/docker-github-actions-runner`, which builds `FROM ubuntu:focal`. Ubuntu 20.04 left standard security support in May 2025. `azure-cli=2.72.0-1~focal` is the newest build in Microsoft's focal feed — verified against the repository index — while the noble feed is at `2.91.0`. Cloud-privileged workflow code therefore runs on an unsupported OS with a CLI that no longer receives monthly security fixes, and digest pinning freezes that exposure rather than resolving it.
+
+**Recommended**: Rebase onto Ubuntu 24.04 and install from the matching noble feed. This cannot be done by changing `FROM` alone: the ephemeral registration flow, the `runner` account, gosu privilege-drop, and the `REPO_URL`/`RUNNER_TOKEN`/`EPHEMERAL` contract all come from the upstream entrypoint, so moving off that image means reimplementing it and revalidating runtime behavior. Add scheduled rebuilds so the digest does not go stale silently.
+
+#### Workflow steps run as root
+
+**Current**: The pinned upstream config sets no OCI `User`, and its entrypoint resolves `RUN_AS_ROOT=${RUN_AS_ROOT:="true"}`. The scaler's ACI environment does not override it, so workflow steps execute as root with the container filesystem, runner installation, and job credentials in reach.
+
+**Recommended**: Have the scaler set `RUN_AS_ROOT=false` so the upstream entrypoint drops to the `runner` account via gosu, then validate representative Azure CLI and Terraform workflows as non-root before rollout. One-job ACI ephemerality limits persistence between jobs but does not protect secrets, OIDC tokens, or managed-identity tokens during a job.
+
+#### No vulnerability, SBOM, or signature gate on the runner image
+
+**Current**: CI builds the image and asserts the toolchain, but nothing produces an SBOM, scans for vulnerabilities, or attests provenance. A digest proves byte identity, not that the bytes are safe or that they came from a reviewed build.
+
+**Recommended**: Generate an SBOM and provenance attestation for the built image, scan and fail on policy-defined critical/high findings, and sign the ACR manifest before the scaler is pointed at it.
+
+#### Runner image reference is a mutable tag
+
+**Current**: `local.scaler_base_settings` hard-codes `RUNNER_IMAGE = "${acr.login_server}/actions-runner:latest"`. Nothing captures the ACR manifest digest, so the infrastructure revision does not identify the image ACI executes. A rebuild or retag silently changes new runners, and rollback cannot select known bytes.
+
+**Recommended**: Accept `runner_image_repository`, `runner_image_tag`, and an optional `runner_image_digest` (validated as `sha256:` plus 64 lowercase hex), resolve to `<acr>/<repo>@sha256:...` when a digest is supplied and `<acr>/<repo>:<tag>` otherwise, pass that single normalized reference through `RUNNER_IMAGE`, and expose it as an output. The scaler already forwards `RUNNER_IMAGE` to ACI unchanged and derives the registry from the first path segment, so a digest reference needs no scaler change.
+
 ### Reliability
 
 #### Confirm the Service Bus provider floor against a clean namespace

@@ -1,0 +1,135 @@
+# ==============================================================================
+# Validate — module CI
+#
+# This repository publishes a Terraform module; it does not deploy anything.
+# CI therefore needs no Azure credentials and never runs plan or apply.
+# ==============================================================================
+
+name: Validate
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  terraform:
+    name: Terraform
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
+        with:
+          terraform_version: "~> 1.9"
+          terraform_wrapper: false
+
+      - name: Terraform fmt
+        run: terraform fmt -check -recursive
+
+      - name: Validate module
+        working-directory: modules/runners
+        run: |
+          terraform init -backend=false -input=false
+          terraform validate
+
+      # examples/basic pins the module to a published tag, so `init` here would
+      # download that release rather than the working tree. Formatting is
+      # checked above; correctness of the example is covered by the module.
+      - name: Check examples parse
+        working-directory: examples/basic
+        run: terraform fmt -check
+
+  scaler-function:
+    name: Scaler function
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: scaler-function
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Setup Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Compile check
+        run: python -m compileall -q function_app.py
+
+      - name: Import check
+        run: python -c "import function_app"
+
+  runner-image:
+    name: Runner image
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+
+      # ubuntu-latest runners are linux/amd64, so this builds natively with no
+      # emulation. The platform stays explicit because ACI only runs amd64.
+      - name: Build
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        with:
+          context: runner-image
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: github-runner:test
+
+      # The Dockerfile already runs `az version` during the build, so a broken
+      # install fails earlier than this. This asserts it in the final image.
+      - name: Azure CLI is present
+        run: docker run --rm --entrypoint az github-runner:test version
+
+      - name: Tools the workflows expect
+        run: |
+          for probe in "git --version" "jq --version" "bash --version" \
+                       "curl --version" "tar --version" "unzip -v" "zip -v"; do
+            tool=${probe%% *}
+            args=${probe#* }
+            printf '%-6s ' "$tool"
+            docker run --rm --entrypoint "$tool" github-runner:test $args \
+              2>&1 | head -1
+          done
+
+      # Records the effective runtime user. Upstream sets no OCI User, so this
+      # reports root today; the step documents that rather than enforcing it.
+      - name: Report effective runtime user
+        run: |
+          echo "default:              $(docker run --rm --entrypoint id github-runner:test -un)"
+          echo "with RUN_AS_ROOT=false the entrypoint drops to the runner account via gosu"
+          docker run --rm --entrypoint getent github-runner:test passwd runner \
+            || echo "no runner account found"
+
+      # A credential baked into a layer stays in the image even if a later layer
+      # deletes it, so check the layers rather than just the final filesystem.
+      - name: No credentials in image layers
+        run: |
+          docker save github-runner:test -o /tmp/image.tar
+          mkdir -p /tmp/layers && tar -xf /tmp/image.tar -C /tmp/layers
+          if grep -rIl -E 'AZURE_CLIENT_SECRET|BEGIN (RSA|OPENSSH|EC) PRIVATE KEY' \
+               /tmp/layers 2>/dev/null; then
+            echo "::error::possible credential material found in image layers"
+            exit 1
+          fi
+          echo "no credential patterns found"

@@ -29,6 +29,7 @@ A module and its control-plane code. Nothing more.
 ```
 ├── modules/runners/     # The Terraform module — all Azure resources
 ├── scaler-function/     # Python Function App code (the control plane)
+├── runner-image/        # Dockerfile for the ephemeral ACI runner
 ├── examples/basic/      # Minimal module call
 └── .github/workflows/   # fmt + validate, and semantic-release tagging
 ```
@@ -267,11 +268,12 @@ Your identity also needs `Storage Blob Data Contributor` on whichever storage ac
 Terraform provisions the infrastructure. Two things still need to reach it: the runner image and the scaler code.
 
 ```bash
-# 1. Import the runner image into your ACR
+# 1. Build the runner image into your ACR
+#    The module owns the Dockerfile; you own the registry. See runner-image/README.md.
 ACR_NAME=$(terraform output -raw acr_login_server | cut -d. -f1)
-az acr import --name "$ACR_NAME" \
-  --source ghcr.io/myoung34/docker-github-actions-runner:latest \
-  --image actions-runner:latest --force
+az acr build --registry "$ACR_NAME" \
+  --image actions-runner:latest \
+  --file Dockerfile ./runner-image
 
 # 2. Deploy the scaler function
 FUNC_APP=$(terraform output -raw function_app_name)
@@ -295,7 +297,9 @@ curl -sL "https://github.com/patrickthor/terraform-azurerm-github-runners/archiv
   | tar xz --wildcards --strip-components=1 -C . "*/scaler-function"
 ```
 
-The scaler always pulls the ACR-hosted image. To use a custom runner image, push it to ACR as `actions-runner:latest`.
+The same tarball carries `runner-image/`, so the Dockerfile and the scaler code come from one release rather than drifting apart. Replace `"*/scaler-function"` with `"*/scaler-function" "*/runner-image"` to extract both.
+
+The scaler always pulls from your ACR, never from public GHCR, and it currently resolves the image as `<acr_login_server>/actions-runner:latest`. Pushing a different image to that tag replaces what runners execute, with no change to the infrastructure revision — see [`runner-image/README.md`](runner-image/README.md) for the tradeoff.
 
 ## Store the GitHub App secrets in Key Vault
 
