@@ -11,7 +11,7 @@ terraform {
       # The module floor is ">= 5.6.0" (first release with Service Bus API
       # 2026-01-01). A root module should pin tighter than the module it calls,
       # so the exact patch line is reproducible.
-      version = "~> 5.7.0"
+      version = "~> 5.12.0"
     }
   }
 }
